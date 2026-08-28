@@ -10,6 +10,9 @@ import {
 } from "@/game/world/studioWorld";
 import { createWorldCollision } from "@/game/world/collision";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
+import { KeyboardInput } from "@/game/input/KeyboardInput";
+import { TouchInput } from "@/game/input/TouchInput";
+import { CombinedInput } from "@/game/input/CombinedInput";
 import { InteractionSystem, INTERACTION_EVENTS } from "@/game/interactions/InteractionSystem";
 import { InteractionPrompt } from "@/game/interactions/InteractionPrompt";
 import { INTERACTABLES } from "@/game/data/interactables";
@@ -18,6 +21,8 @@ import type { Interactable } from "@/game/types/interaction";
 
 export class StudioScene extends Phaser.Scene {
   player!: Player;
+  /** Written by the mobile D-pad overlay; read by Player alongside KeyboardInput. */
+  readonly touchInput = new TouchInput();
   private interactionSystem!: InteractionSystem;
   private interactionPrompt!: InteractionPrompt;
   private inputLocked = false;
@@ -39,7 +44,8 @@ export class StudioScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
     const collision = createWorldCollision(this);
 
-    this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y);
+    const input = new CombinedInput([new KeyboardInput(this), this.touchInput]);
+    this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, input);
     this.physics.add.collider(this.player.sprite, collision);
 
     this.cameras.main.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
@@ -49,6 +55,11 @@ export class StudioScene extends Phaser.Scene {
     this.interactionSystem = new InteractionSystem(this, INTERACTABLES);
     this.interactionPrompt = new InteractionPrompt(this, this.interactionSystem, this.player);
     this.interactionSystem.on(INTERACTION_EVENTS.Open, this.handleInteractionOpen, this);
+    this.interactionSystem.on(
+      INTERACTION_EVENTS.Prompt,
+      (interactable: Interactable | null) => this.events.emit(SCENE_EVENTS.InteractionPromptChange, interactable),
+      this,
+    );
 
     this.input.keyboard?.on("keydown-ESC", this.handleEscape, this);
 
@@ -65,6 +76,11 @@ export class StudioScene extends Phaser.Scene {
   /** Called by React when a portfolio panel is closed via its own close button (not ESC). */
   unlockInput(): void {
     this.inputLocked = false;
+  }
+
+  /** Called by the mobile [E] button — same trigger the keyboard E key uses internally. */
+  interact(): void {
+    this.interactionSystem.interact();
   }
 
   private handleInteractionOpen(interactable: Interactable): void {

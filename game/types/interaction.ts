@@ -19,4 +19,5 @@ export const GAME_EVENTS = {
 export const SCENE_EVENTS = {
   InteractionOpen: "interactionOpen",
   InteractionClose: "interactionClose",
+  InteractionPromptChange: "interactionPromptChange",
 } as const;
