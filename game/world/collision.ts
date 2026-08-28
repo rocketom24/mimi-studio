@@ -1,7 +1,7 @@
 import * as Phaser from "phaser";
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
-import { computeWallRects } from "@/game/world/studioWorld";
+import { computeWallRects } from "@/game/world/wallSystem";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 

@@ -13,6 +13,32 @@ export interface DoorGap {
   length: number;
 }
 
+export type FurnitureKind =
+  | "shelf"
+  | "mat"
+  | "tv"
+  | "sofa"
+  | "coffeeTable"
+  | "desk"
+  | "computer"
+  | "chair"
+  | "displayTable"
+  | "workstation"
+  | "workbench"
+  | "toolStorage"
+  | "bookshelf"
+  | "books"
+  | "console"
+  | "smallTable"
+  | "counter"
+  | "fridge"
+  | "diningTable"
+  | "shower"
+  | "sink"
+  | "toilet"
+  | "bed"
+  | "nightstand";
+
 export interface FurniturePiece {
   x: number;
   y: number;
@@ -21,6 +47,8 @@ export interface FurniturePiece {
   color: number;
   /** Whether Mimi collides with this piece. Defaults to true when omitted. */
   solid?: boolean;
+  /** Which pixel-art shape to draw. Falls back to a plain shaded box when omitted. */
+  kind?: FurnitureKind;
 }
 
 export interface PixelRect {
@@ -30,11 +58,16 @@ export interface PixelRect {
   h: number;
 }
 
+export type FloorType = "wood" | "tile" | "workshop";
+
 export interface RoomDef {
   id: string;
   label: string;
   tiles: TileRect;
   floorColor: number;
+  floorType: FloorType;
   doors: DoorGap[];
   furniture: FurniturePiece[];
+  /** Decorative-only window rects, in absolute world-pixel space, sitting on the room's border wall band. Never collides. */
+  windows?: PixelRect[];
 }

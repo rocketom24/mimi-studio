@@ -20,4 +20,6 @@ export const SCENE_EVENTS = {
   InteractionOpen: "interactionOpen",
   InteractionClose: "interactionClose",
   InteractionPromptChange: "interactionPromptChange",
+  CameraRotateStart: "cameraRotateStart",
+  CameraRotateEnd: "cameraRotateEnd",
 } as const;

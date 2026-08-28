@@ -3,6 +3,9 @@ import { TILE_SIZE } from "@/game/config/world";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import type { InputSource } from "@/game/types/input";
 import type { Facing, PlayerState } from "@/game/types/player";
+import { visualDepth } from "@/game/world/depth";
+import { projectOriented, viewToWorldDelta } from "@/game/world/projection";
+import type { ViewOrientation } from "@/game/world/projection";
 
 export const PLAYER_WIDTH = 10;
 export const PLAYER_HEIGHT = 16;
@@ -21,7 +24,6 @@ export const PLAYER_SPAWN_TILE_Y = 12;
 export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 
-const PLAYER_DEPTH = 10;
 const PLAYER_SPEED = 56; // logical px/sec
 
 const IDLE_BOB_TIME_SCALE = 1;
@@ -90,13 +92,21 @@ function generateFacingTexture(scene: Phaser.Scene, facing: Facing): void {
 /**
  * Mimi, the player character. Owns her sprite, movement, facing, and animation.
  * Collision belongs to a later phase; input source is swappable (keyboard now).
+ *
+ * `sprite` is the Arcade physics body and stays purely logical — Phaser's
+ * Body.preUpdate() resyncs itself FROM the game object's x/y every single
+ * step, so mutating sprite.x/y for cosmetic reasons (projection, bob) would
+ * feed straight back into the collision-authoritative position and corrupt
+ * it. `visual` is a plain, non-physics sprite that mirrors sprite's texture
+ * and is repositioned to the projected/bobbed screen position each frame —
+ * that's the one the camera follows and the one actually drawn.
  */
 export class Player {
   readonly sprite: Phaser.Physics.Arcade.Sprite;
+  readonly visual: Phaser.GameObjects.Sprite;
   private state: PlayerState;
   private readonly input: InputSource;
   private readonly bob = { offset: 0 };
-  private appliedBob = 0;
   private readonly bobTween: Phaser.Tweens.Tween;
 
   constructor(scene: Phaser.Scene, x: number, y: number, input?: InputSource) {
@@ -107,12 +117,16 @@ export class Player {
 
     this.sprite = scene.physics.add.sprite(x, y, textureKey(this.state.facing));
     this.sprite.setOrigin(0.5, 1);
-    this.sprite.setDepth(PLAYER_DEPTH);
+    this.sprite.setVisible(false);
 
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     body.setSize(BODY_WIDTH, BODY_HEIGHT);
     body.setOffset(BODY_OFFSET_X, BODY_OFFSET_Y);
     body.setCollideWorldBounds(true);
+
+    this.visual = scene.add.sprite(x, y, textureKey(this.state.facing));
+    this.visual.setOrigin(0.5, 1);
+    this.visual.setDepth(visualDepth(x, y, 0));
 
     this.bobTween = scene.tweens.add({
       targets: this.bob,
@@ -124,31 +138,63 @@ export class Player {
     });
   }
 
-  update(): void {
-    // Undo last frame's cosmetic bob before physics-derived position is used.
-    this.sprite.y -= this.appliedBob;
-
+  update(orientation: ViewOrientation): void {
     const intent = this.input.getIntent();
-    let dx = 0;
-    let dy = 0;
-    if (intent.up) dy -= 1;
-    if (intent.down) dy += 1;
-    if (intent.left) dx -= 1;
-    if (intent.right) dx += 1;
+    let screenDx = 0;
+    let screenDy = 0;
+    if (intent.up) screenDy -= 1;
+    if (intent.down) screenDy += 1;
+    if (intent.left) screenDx -= 1;
+    if (intent.right) screenDx += 1;
 
-    const moving = dx !== 0 || dy !== 0;
+    const moving = screenDx !== 0 || screenDy !== 0;
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     if (moving) {
-      const length = Math.hypot(dx, dy);
-      body.setVelocity((dx / length) * PLAYER_SPEED, (dy / length) * PLAYER_SPEED);
-      this.setFacing(facingFromDelta(dx, dy));
+      const length = Math.hypot(screenDx, screenDy);
+      const world = viewToWorldDelta(screenDx / length, screenDy / length, orientation);
+      body.setVelocity(world.x * PLAYER_SPEED, world.y * PLAYER_SPEED);
+      // Facing tracks the screen-space intent (what the visitor pressed), not the
+      // rotated world direction — pressing screen-right must always show Mimi
+      // facing screen-right, regardless of camera orientation.
+      this.setFacing(facingFromDelta(screenDx, screenDy));
     } else {
       body.setVelocity(0, 0);
     }
     this.setAnimationState(moving ? "walking" : "idle");
 
-    this.appliedBob = this.bob.offset;
-    this.sprite.y += this.appliedBob;
+    this.reprojectVisual(orientation);
+  }
+
+  /** Repositions the visual sprite for the given orientation only — no input/movement/physics. Used both by the normal per-frame update() and to snap the visual once a rotation finishes. */
+  reprojectVisual(orientation: ViewOrientation): void {
+    const projected = projectOriented(this.sprite.x, this.sprite.y, orientation);
+    this.visual.setPosition(projected.x, projected.y + this.bob.offset);
+    this.visual.setDepth(visualDepth(this.sprite.x, this.sprite.y, orientation));
+  }
+
+  /**
+   * Mid-rotation only: blends the visual sprite's screen position/depth
+   * between its old- and new-orientation projections of the SAME logical
+   * point (sprite.x/y never changes) so Mimi turns smoothly with the
+   * apartment instead of snapping once the camera settles.
+   */
+  blendVisual(fromOrientation: ViewOrientation, toOrientation: ViewOrientation, t: number): void {
+    const a = projectOriented(this.sprite.x, this.sprite.y, fromOrientation);
+    const b = projectOriented(this.sprite.x, this.sprite.y, toOrientation);
+    this.visual.setPosition(Phaser.Math.Linear(a.x, b.x, t), Phaser.Math.Linear(a.y, b.y, t) + this.bob.offset);
+    const depthA = visualDepth(this.sprite.x, this.sprite.y, fromOrientation);
+    const depthB = visualDepth(this.sprite.x, this.sprite.y, toOrientation);
+    this.visual.setDepth(Phaser.Math.Linear(depthA, depthB, t));
+  }
+
+  /** Logical world X — the physics-authoritative position, unprojected. Use for interaction checks and room lookups. */
+  get worldX(): number {
+    return this.sprite.x;
+  }
+
+  /** Logical world Y — the physics-authoritative position, unprojected. Use for interaction checks and room lookups. */
+  get worldY(): number {
+    return this.sprite.y;
   }
 
   /** Zeroes velocity and returns to idle — used to freeze Mimi while a UI panel has input focus. */
@@ -161,7 +207,7 @@ export class Player {
   setFacing(facing: Facing): void {
     if (this.state.facing === facing) return;
     this.state = { ...this.state, facing };
-    this.sprite.setTexture(textureKey(facing));
+    this.visual.setTexture(textureKey(facing));
   }
 
   setAnimationState(animationState: PlayerState["animationState"]): void {

@@ -1,14 +1,15 @@
 import * as Phaser from "phaser";
-import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { CORRIDOR_FLOOR_COLOR, WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { ORIENTATIONS, projectedSizeFor } from "@/game/world/projection";
+import type { ViewOrientation } from "@/game/world/projection";
 import { ROOMS } from "@/game/world/rooms";
-import {
-  createFurniture,
-  createRoom,
-  createRoomLabel,
-  createStudioBackground,
-  createWalls,
-} from "@/game/world/studioWorld";
+import { createRoomLabel } from "@/game/world/studioWorld";
+import { createCorridorFloor, createRoomFloor } from "@/game/world/floorSystem";
+import { createDoorDecorations, createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
+import { createFurniture } from "@/game/world/furnitureSystem";
 import { createWorldCollision } from "@/game/world/collision";
+import { updateWallOcclusion } from "@/game/world/occlusionSystem";
+import { CameraController, CAMERA_EVENTS, type RotateStartPayload } from "@/game/world/cameraController";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import { TouchInput } from "@/game/input/TouchInput";
@@ -19,27 +20,43 @@ import { INTERACTABLES } from "@/game/data/interactables";
 import { GAME_EVENTS, SCENE_EVENTS } from "@/game/types/interaction";
 import type { Interactable } from "@/game/types/interaction";
 
+type LayerObject = Phaser.GameObjects.Graphics | Phaser.GameObjects.Text;
+interface TrackedObject {
+  obj: LayerObject;
+  baseX: number;
+  baseY: number;
+  baseDepth: number;
+}
+
+/**
+ * Depth bias applied to whichever layer is currently the larger (nearer) of
+ * the two during a rotation fold, so it draws cleanly over the smaller one
+ * instead of the two layers' individually Y-sorted objects interleaving.
+ * Far above DEPTH.PROMPT (5000) — the only other thing on screen — with
+ * headroom to spare.
+ */
+const FOLD_TOP_DEPTH_BIAS = 100_000;
+
 export class StudioScene extends Phaser.Scene {
   player!: Player;
   /** Written by the mobile D-pad overlay; read by Player alongside KeyboardInput. */
   readonly touchInput = new TouchInput();
+  private cameraController!: CameraController;
   private interactionSystem!: InteractionSystem;
   private interactionPrompt!: InteractionPrompt;
   private inputLocked = false;
+  /** Shared vertical hinge (world/projected X) both layers fold toward during a rotation — captured once per rotation so it doesn't drift as the camera nudges. */
+  private rotationPivotX = 0;
+  private readonly layerObjects = new Map<ViewOrientation, TrackedObject[]>();
+  private readonly wallSegmentsByOrientation = new Map<ViewOrientation, WallSegment[]>();
 
   constructor() {
     super("StudioScene");
   }
 
   create(): void {
-    createStudioBackground(this);
-    createWalls(this);
-
-    for (const room of ROOMS) {
-      createRoom(this, room);
-      createFurniture(this, room);
-      createRoomLabel(this, room);
-    }
+    this.cameraController = new CameraController(this);
+    this.buildOrientationLayers();
 
     this.physics.world.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
     const collision = createWorldCollision(this);
@@ -48,8 +65,9 @@ export class StudioScene extends Phaser.Scene {
     this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, input);
     this.physics.add.collider(this.player.sprite, collision);
 
-    this.cameras.main.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
-    this.cameras.main.startFollow(this.player.sprite, true, 0.1, 0.1);
+    const size = projectedSizeFor(this.cameraController.getOrientation());
+    this.cameras.main.setBounds(0, 0, size.width, size.height);
+    this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
     this.cameras.main.setDeadzone(48, 28);
 
     this.interactionSystem = new InteractionSystem(this, INTERACTABLES);
@@ -61,15 +79,32 @@ export class StudioScene extends Phaser.Scene {
       this,
     );
 
+    this.cameraController.on(CAMERA_EVENTS.RotateStart, this.handleRotateStart, this);
+    this.cameraController.on(CAMERA_EVENTS.RotateComplete, this.handleRotateComplete, this);
+
     this.input.keyboard?.on("keydown-ESC", this.handleEscape, this);
+    this.input.keyboard?.on("keydown-Q", () => this.rotateCameraLeft(), this);
+    this.input.keyboard?.on("keydown-R", () => this.rotateCameraRight(), this);
 
     this.game.events.emit(GAME_EVENTS.StudioReady, this);
   }
 
   update(): void {
+    if (this.cameraController.isRotating()) {
+      this.updateDuringRotation();
+      return;
+    }
     if (this.inputLocked) return;
-    this.player.update();
-    this.interactionSystem.update(this.player.sprite.x, this.player.sprite.y);
+
+    const orientation = this.cameraController.getOrientation();
+    this.player.update(orientation);
+    updateWallOcclusion(
+      this.wallSegmentsByOrientation.get(orientation)!,
+      this.player.worldX,
+      this.player.worldY,
+      orientation,
+    );
+    this.interactionSystem.update(this.player.worldX, this.player.worldY);
     this.interactionPrompt.update();
   }
 
@@ -83,6 +118,120 @@ export class StudioScene extends Phaser.Scene {
     this.interactionSystem.interact();
   }
 
+  /** Called by the desktop Q key and the mobile ↺ button. No-op while a panel is open or a rotation is already in progress. */
+  rotateCameraLeft(): void {
+    if (this.inputLocked) return;
+    this.cameraController.rotateLeft();
+  }
+
+  /** Called by the desktop R key and the mobile ↻ button. No-op while a panel is open or a rotation is already in progress. */
+  rotateCameraRight(): void {
+    if (this.inputLocked) return;
+    this.cameraController.rotateRight();
+  }
+
+  /**
+   * Builds the four camera orientations' worth of static geometry once, up
+   * front. Every Graphics/Text object still lives directly on the scene's
+   * own display list (never reparented into a Container — Phaser containers
+   * don't depth-sort their children, which would silently break the
+   * Y-based layering everything else here relies on); only one
+   * orientation's objects are visible at a time outside of a transition.
+   */
+  private buildOrientationLayers(): void {
+    for (const orientation of ORIENTATIONS) {
+      const objects: LayerObject[] = [];
+      objects.push(createCorridorFloor(this, CORRIDOR_FLOOR_COLOR, orientation));
+      for (const room of ROOMS) objects.push(createRoomFloor(this, room, orientation));
+
+      const wallSegments = createWalls(this, orientation);
+      objects.push(...wallSegments.map((segment) => segment.graphics));
+      objects.push(createDoorDecorations(this, orientation));
+      for (const room of ROOMS) {
+        const windowGraphics = createWindows(this, room, orientation);
+        if (windowGraphics) objects.push(windowGraphics);
+      }
+      for (const room of ROOMS) {
+        objects.push(...createFurniture(this, room, orientation));
+        objects.push(createRoomLabel(this, room, orientation));
+      }
+
+      const visible = orientation === this.cameraController.getOrientation();
+      const tracked = objects.map((obj) => {
+        obj.setVisible(visible);
+        return { obj, baseX: obj.x, baseY: obj.y, baseDepth: obj.depth };
+      });
+
+      this.layerObjects.set(orientation, tracked);
+      this.wallSegmentsByOrientation.set(orientation, wallSegments);
+    }
+  }
+
+  /**
+   * True continuous rotation, faked cheaply from the existing prebuilt
+   * layers: both the outgoing and incoming layer are scaled horizontally
+   * (never vertically — this is a yaw around a vertical hinge) around one
+   * shared pivot column, outgoing 1→0 while incoming 0→1 at the same rate.
+   * That reads as a single flat card turning edge-on and vanishing/unfolding
+   * at the hinge, not two flat images sliding past each other under a fade —
+   * no alpha is touched at all. The two layers' Y-sorted depths interleave
+   * arbitrarily where they overlap, so whichever layer is currently larger
+   * (nearer) gets a depth bias to draw cleanly over the smaller one.
+   */
+  private updateDuringRotation(): void {
+    const { from, to, t } = this.cameraController.getTransition();
+    const fromScale = 1 - t;
+    const toScale = t;
+    this.applyLayerFold(from, fromScale, fromScale >= toScale);
+    this.applyLayerFold(to, toScale, toScale > fromScale);
+    this.player.blendVisual(from, to, t);
+  }
+
+  private applyLayerFold(orientation: ViewOrientation, scaleX: number, onTop: boolean): void {
+    for (const { obj, baseX, baseY, baseDepth } of this.layerObjects.get(orientation)!) {
+      obj.setScale(scaleX, 1);
+      obj.setPosition(this.rotationPivotX * (1 - scaleX) + scaleX * baseX, baseY);
+      obj.setDepth(onTop ? baseDepth + FOLD_TOP_DEPTH_BIAS : baseDepth);
+    }
+  }
+
+  private handleRotateStart({ from, to }: RotateStartPayload): void {
+    this.inputLocked = true;
+    this.rotationPivotX = this.cameras.main.worldView.centerX;
+    this.player.stop();
+    this.interactionPrompt.setHidden(true);
+    this.events.emit(SCENE_EVENTS.CameraRotateStart);
+
+    for (const { obj } of this.layerObjects.get(to)!) obj.setVisible(true);
+
+    const fromSize = projectedSizeFor(from);
+    const toSize = projectedSizeFor(to);
+    this.cameras.main.setBounds(0, 0, Math.max(fromSize.width, toSize.width), Math.max(fromSize.height, toSize.height));
+    // Instant tracking for the short transition: a lerped follow would lag behind the blended visual position and reintroduce the jump/black-gap risk this is meant to avoid.
+    this.cameras.main.startFollow(this.player.visual, true, 1, 1);
+  }
+
+  private handleRotateComplete(orientation: ViewOrientation): void {
+    for (const [layerOrientation, tracked] of this.layerObjects) {
+      const visible = layerOrientation === orientation;
+      for (const { obj, baseX, baseY, baseDepth } of tracked) {
+        obj.setVisible(visible);
+        obj.setScale(1, 1);
+        obj.setPosition(baseX, baseY);
+        obj.setDepth(baseDepth);
+      }
+    }
+
+    const size = projectedSizeFor(orientation);
+    this.cameras.main.setBounds(0, 0, size.width, size.height);
+    this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
+    this.player.reprojectVisual(orientation);
+
+    this.interactionPrompt.setHidden(false);
+    this.inputLocked = false;
+    this.events.emit(SCENE_EVENTS.CameraRotateEnd);
+  }
+
   private handleInteractionOpen(interactable: Interactable): void {
     this.inputLocked = true;
     this.player.stop();
@@ -90,7 +239,7 @@ export class StudioScene extends Phaser.Scene {
   }
 
   private handleEscape(): void {
-    if (!this.inputLocked) return;
+    if (!this.inputLocked || this.cameraController.isRotating()) return;
     this.inputLocked = false;
     this.events.emit(SCENE_EVENTS.InteractionClose);
   }
