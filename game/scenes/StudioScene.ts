@@ -30,10 +30,11 @@ export class StudioScene extends Phaser.Scene {
     this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y);
 
     this.cameras.main.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
-    // Frame the world's top-left corner rather than centering on Mimi: at her
-    // spawn point, centering scrolls the view down far enough to crop Entry's
-    // north wall and label above the viewport. This shows all of Entry, Mimi,
-    // and the path into the corridor.
-    this.cameras.main.setScroll(0, 0);
+    this.cameras.main.startFollow(this.player.sprite, true, 0.1, 0.1);
+    this.cameras.main.setDeadzone(48, 28);
+  }
+
+  update(_time: number, delta: number): void {
+    this.player.update(delta);
   }
 }
