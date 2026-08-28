@@ -86,11 +86,14 @@ export function createFurniture(scene: Phaser.Scene, room: RoomDef): void {
 }
 
 export function createRoomLabel(scene: Phaser.Scene, room: RoomDef): void {
+  const centerX = px(room.tiles.x) + px(room.tiles.w) / 2;
+  const topY = px(room.tiles.y) + 4;
   scene.add
-    .text(px(room.tiles.x) + 4, px(room.tiles.y) + 3, room.label, {
+    .text(centerX, topY, room.label, {
       fontFamily: "monospace",
       fontSize: "6px",
       color: "#d8cdf0",
     })
+    .setOrigin(0.5, 0)
     .setAlpha(0.85);
 }
