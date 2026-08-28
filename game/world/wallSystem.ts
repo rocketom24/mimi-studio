@@ -8,12 +8,13 @@ import {
   WORLD_TILE_HEIGHT,
   WORLD_TILE_WIDTH,
 } from "@/game/config/world";
-import { BOTTOM_Y, ROOMS, TOP_H, TOP_Y } from "@/game/world/rooms";
+import { ROOMS, STAIRCASES } from "@/game/world/rooms";
 import { darken, lighten } from "@/game/world/palette";
 import { DEPTH, visualDepth } from "@/game/world/depth";
 import { project, toViewRect } from "@/game/world/projection";
 import type { ViewOrientation } from "@/game/world/projection";
 import type { PixelRect, RoomDef } from "@/game/types/world";
+import type { Level } from "@/game/types/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
@@ -23,8 +24,69 @@ export interface WallSegment {
   graphics: Phaser.GameObjects.Graphics;
 }
 
-/** One-tile-tall horizontal wall row, split into segments that leave door-width gaps. */
-function rowSegments(
+interface WallGap {
+  /** "h" = a gap in a horizontal wall line (north/south doors), fixed at a world Y. "v" = a gap in a vertical wall line (east/west doors), fixed at a world X. */
+  axis: "h" | "v";
+  pos: number;
+  from: number;
+  to: number;
+}
+
+/** Every door gap declared by any room on this level, in world-pixel space. A shared wall between two rooms only needs ONE of them to declare the door — this list is matched purely by position, not by which room declared it, so it cuts the gap into both rooms' facing walls automatically. */
+function collectDoorGaps(rooms: RoomDef[]): WallGap[] {
+  const gaps: WallGap[] = [];
+  for (const room of rooms) {
+    const x = px(room.tiles.x);
+    const y = px(room.tiles.y);
+    const w = px(room.tiles.w);
+    const h = px(room.tiles.h);
+    for (const door of room.doors) {
+      const from = px(door.offset) + (door.side === "north" || door.side === "south" ? x : y);
+      const to = from + px(door.length);
+      if (door.side === "north") gaps.push({ axis: "h", pos: y, from, to });
+      else if (door.side === "south") gaps.push({ axis: "h", pos: y + h, from, to });
+      else if (door.side === "west") gaps.push({ axis: "v", pos: x, from, to });
+      else gaps.push({ axis: "v", pos: x + w, from, to });
+    }
+  }
+  return gaps;
+}
+
+/** One wall line (fixed at `pos` on `axis`, spanning `[spanStart, spanEnd)`), split into segments that leave gaps for whichever WallGaps land on this exact line. */
+function wallLine(axis: "h" | "v", pos: number, spanStart: number, spanEnd: number, gaps: WallGap[]): PixelRect[] {
+  const onThisLine = gaps
+    .filter((g) => g.axis === axis && g.pos === pos)
+    .sort((a, b) => a.from - b.from);
+  const rects: PixelRect[] = [];
+  let cursor = spanStart;
+  for (const gap of onThisLine) {
+    if (gap.from > cursor) {
+      rects.push(axis === "h" ? { x: cursor, y: pos, w: gap.from - cursor, h: TILE_SIZE } : { x: pos, y: cursor, w: TILE_SIZE, h: gap.from - cursor });
+    }
+    cursor = Math.max(cursor, gap.to);
+  }
+  if (cursor < spanEnd) {
+    rects.push(axis === "h" ? { x: cursor, y: pos, w: spanEnd - cursor, h: TILE_SIZE } : { x: pos, y: cursor, w: TILE_SIZE, h: spanEnd - cursor });
+  }
+  return rects;
+}
+
+/** All 4 wall-bearing edges of one rect-shaped zone (a room or a staircase nook), each edge occupying the tile row/column immediately outside the zone's own footprint — never overlapping its floor. */
+function zoneEdgeWalls(tiles: { x: number; y: number; w: number; h: number }, gaps: WallGap[]): PixelRect[] {
+  const x = px(tiles.x);
+  const y = px(tiles.y);
+  const w = px(tiles.w);
+  const h = px(tiles.h);
+  return [
+    ...wallLine("h", y - TILE_SIZE, x, x + w, gaps), // north
+    ...wallLine("h", y + h, x, x + w, gaps), // south
+    ...wallLine("v", x - TILE_SIZE, y, y + h, gaps), // west
+    ...wallLine("v", x + w, y, y + h, gaps), // east
+  ];
+}
+
+/** One-tile-tall horizontal wall row, split into segments that leave door-width gaps. Used for just the two full-width border rows — the exterior door is a gap in world-tile-x terms, unlike interior doors which are pixel-based WallGaps. */
+function rowSegmentsForBorder(
   yTile: number,
   xStartTile: number,
   xEndTile: number,
@@ -43,35 +105,27 @@ function rowSegments(
 }
 
 /**
- * Every wall rectangle in the studio, in world-pixel space. This is the
- * single source of truth for wall geometry: both the visual drawing and the
- * collision bodies are built from it (in world space, never rotated), so
- * they can never drift apart and physics never sees a camera orientation.
+ * Every wall rectangle for one level of the studio, in world-pixel space.
+ * This is the single source of truth for wall geometry: both the visual
+ * drawing and the collision bodies are built from it (in world space, never
+ * rotated), so they can never drift apart and physics never sees a camera
+ * orientation.
  */
-export function computeWallRects(): PixelRect[] {
-  const topRooms = ROOMS.filter((r) => r.tiles.y === TOP_Y);
-  const bottomRooms = ROOMS.filter((r) => r.tiles.y === BOTTOM_Y);
-  const doorGaps = (rooms: RoomDef[]) =>
-    rooms.map((r) => ({ x: r.tiles.x + r.doors[0].offset, length: r.doors[0].length }));
+export function computeWallRects(level: Level): PixelRect[] {
+  const rooms = ROOMS.filter((r) => r.level === level);
+  const stairs = STAIRCASES.filter((s) => s.level === level);
+  const gaps = collectDoorGaps(rooms);
 
+  const exteriorGaps = level === 0 ? [EXTERIOR_DOOR] : [];
   const rects: PixelRect[] = [
-    // Outer border, with a front-door gap in the north wall.
-    ...rowSegments(0, 0, WORLD_TILE_WIDTH, [EXTERIOR_DOOR]),
-    ...rowSegments(WORLD_TILE_HEIGHT - 1, 0, WORLD_TILE_WIDTH, []),
+    ...rowSegmentsForBorder(0, 0, WORLD_TILE_WIDTH, exteriorGaps),
+    ...rowSegmentsForBorder(WORLD_TILE_HEIGHT - 1, 0, WORLD_TILE_WIDTH, []),
     { x: 0, y: 0, w: TILE_SIZE, h: WORLD_PIXEL_HEIGHT },
     { x: px(WORLD_TILE_WIDTH - 1), y: 0, w: TILE_SIZE, h: WORLD_PIXEL_HEIGHT },
-    // Walls between the top/bottom rooms and the central corridor.
-    ...rowSegments(TOP_Y + topRooms[0].tiles.h, 1, WORLD_TILE_WIDTH - 1, doorGaps(topRooms)),
-    ...rowSegments(BOTTOM_Y - 1, 1, WORLD_TILE_WIDTH - 1, doorGaps(bottomRooms)),
   ];
 
-  // Dividers between neighboring rooms in the same row (solid, no doors).
-  for (const rooms of [topRooms, bottomRooms]) {
-    for (let i = 0; i < rooms.length - 1; i++) {
-      const dividerX = rooms[i].tiles.x + rooms[i].tiles.w;
-      rects.push({ x: px(dividerX), y: px(rooms[i].tiles.y), w: TILE_SIZE, h: px(rooms[i].tiles.h) });
-    }
-  }
+  for (const room of rooms) rects.push(...zoneEdgeWalls(room.tiles, gaps));
+  for (const stair of stairs) rects.push(...zoneEdgeWalls(stair.tiles, gaps));
 
   return rects;
 }
@@ -126,9 +180,9 @@ function drawWallBlock(g: Phaser.GameObjects.Graphics, rect: PixelRect): void {
 }
 
 /** Renders every wall rect (for one camera orientation) as a projected 3D block. Returns each segment (world-space rect kept) so occlusionSystem can fade front walls live. */
-export function createWalls(scene: Phaser.Scene, orientation: ViewOrientation): WallSegment[] {
+export function createWalls(scene: Phaser.Scene, orientation: ViewOrientation, level: Level): WallSegment[] {
   const segments: WallSegment[] = [];
-  for (const rect of computeWallRects()) {
+  for (const rect of computeWallRects(level)) {
     const view = toViewRect(rect, orientation);
     const g = scene.add.graphics().setDepth(visualDepth(rect.x + rect.w / 2, rect.y + rect.h, orientation));
     drawWallBlock(g, view);
@@ -137,32 +191,24 @@ export function createWalls(scene: Phaser.Scene, orientation: ViewOrientation): 
   return segments;
 }
 
-/** Every doorway gap in the studio, in world-pixel space — for cosmetic frames only, mirrors the gap math in computeWallRects(). */
-function computeDoorGaps(): PixelRect[] {
-  const topRooms = ROOMS.filter((r) => r.tiles.y === TOP_Y);
-  const bottomRooms = ROOMS.filter((r) => r.tiles.y === BOTTOM_Y);
-  const gapsFor = (rooms: RoomDef[], rowY: number): PixelRect[] =>
-    rooms.map((r) => ({
-      x: px(r.tiles.x + r.doors[0].offset),
-      y: px(rowY),
-      w: px(r.doors[0].length),
-      h: TILE_SIZE,
-    }));
-
-  return [
-    { x: px(EXTERIOR_DOOR.x), y: 0, w: px(EXTERIOR_DOOR.length), h: TILE_SIZE },
-    ...gapsFor(topRooms, TOP_Y + TOP_H),
-    ...gapsFor(bottomRooms, BOTTOM_Y - 1),
-  ];
-}
-
 /** Cosmetic frame posts, threshold line, and soft shadow at every doorway. Doesn't touch the gap geometry itself. */
-export function createDoorDecorations(scene: Phaser.Scene, orientation: ViewOrientation): Phaser.GameObjects.Graphics {
+export function createDoorDecorations(scene: Phaser.Scene, orientation: ViewOrientation, level: Level): Phaser.GameObjects.Graphics {
   const g = scene.add.graphics().setDepth(DEPTH.LABEL_BASE);
   const postColor = darken(WALL_COLOR, 20);
   const thresholdColor = darken(WALL_COLOR, 34);
 
-  for (const gap of computeDoorGaps()) {
+  const rooms = ROOMS.filter((r) => r.level === level);
+  const gaps = collectDoorGaps(rooms);
+  const gapRects: PixelRect[] = gaps.map((gap) =>
+    gap.axis === "h"
+      ? { x: gap.from, y: gap.pos, w: gap.to - gap.from, h: TILE_SIZE }
+      : { x: gap.pos, y: gap.from, w: TILE_SIZE, h: gap.to - gap.from },
+  );
+  if (level === 0) {
+    gapRects.push({ x: px(EXTERIOR_DOOR.x), y: 0, w: px(EXTERIOR_DOOR.length), h: TILE_SIZE });
+  }
+
+  for (const gap of gapRects) {
     const view = toViewRect(gap, orientation);
     const anchor = project(view.x, view.y);
 
