@@ -1,163 +1,122 @@
-import type { RoomDef } from "@/game/types/world";
-import { TILE_SIZE, WORLD_TILE_HEIGHT } from "@/game/config/world";
-
-export const TOP_Y = 1;
-export const TOP_H = 14;
-export const BOTTOM_Y = 21;
-export const BOTTOM_H = 14;
-
-const COL_A_X = 1; // width 12
-const COL_B_X = 14; // width 12
-const COL_C_X = 27; // width 12
-const COL_D_X = 40; // width 11
-const COL_E_X = 52; // width 11
-const WIDE = 12;
-const NARROW = 11;
-
-const DOOR = { offset: 4, length: 3 };
+import type { RoomDef, StaircaseDef } from "@/game/types/world";
+import { TILE_SIZE } from "@/game/config/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
-/** Decorative window on the border wall band directly north of a top-row room. */
-function topWindow(roomX: number, localOffset: number, width: number) {
-  return { x: px(roomX + localOffset), y: 1, w: px(width), h: TILE_SIZE - 2 };
-}
-
-/** Decorative window on the border wall band directly south of a bottom-row room. */
-function bottomWindow(roomX: number, localOffset: number, width: number) {
-  return { x: px(roomX + localOffset), y: px(WORLD_TILE_HEIGHT - 1) + 1, w: px(width), h: TILE_SIZE - 2 };
-}
-
 export const ROOMS: RoomDef[] = [
   {
-    id: "entry",
-    label: "ENTRY",
-    tiles: { x: COL_A_X, y: TOP_Y, w: WIDE, h: TOP_H },
+    id: "entrance",
+    level: 0,
+    label: "ENTRANCE",
+    tiles: { x: 4, y: 1, w: 12, h: 8 },
     floorColor: 0x2b2340,
     floorType: "wood",
-    doors: [{ side: "south", ...DOOR }],
+    doors: [
+      { side: "north", offset: 4, length: 3 },
+      { side: "south", offset: 4, length: 3 },
+    ],
     furniture: [
-      { x: 2, y: 2, w: 2, h: 1, color: 0x4a3a63, kind: "shelf" }, // mail / contact shelf
-      { x: 8, y: 9, w: 3, h: 3, color: 0x1c1626, solid: false, kind: "mat" }, // mat
+      { x: 2, y: 1, w: 2, h: 1, color: 0x4a3a63, kind: "shelf" },
+      { x: 5, y: 5, w: 3, h: 2, color: 0x1c1626, solid: false, kind: "mat" },
     ],
   },
   {
     id: "living-room",
+    level: 0,
     label: "LIVING ROOM",
-    tiles: { x: COL_B_X, y: TOP_Y, w: WIDE, h: TOP_H },
+    tiles: { x: 2, y: 10, w: 48, h: 16 },
     floorColor: 0x2e2440,
     floorType: "wood",
-    doors: [{ side: "south", ...DOOR }],
-    windows: [topWindow(COL_B_X, 3, 4)],
+    doors: [{ side: "east", offset: 4, length: 3 }],
+    windows: [{ x: px(20), y: px(9), w: px(4), h: TILE_SIZE - 2 }],
     furniture: [
-      { x: 2, y: 1, w: 4, h: 2, color: 0x1c1626, kind: "tv" }, // TV
-      { x: 2, y: 9, w: 6, h: 3, color: 0x6f5c9e, kind: "sofa" }, // sofa
-      { x: 4, y: 6, w: 2, h: 2, color: 0x8a5a3c, kind: "coffeeTable" }, // coffee table
-    ],
-  },
-  {
-    id: "office",
-    label: "OFFICE",
-    tiles: { x: COL_C_X, y: TOP_Y, w: WIDE, h: TOP_H },
-    floorColor: 0x2a2b40,
-    floorType: "wood",
-    doors: [{ side: "south", ...DOOR }],
-    windows: [topWindow(COL_C_X, 3, 4)],
-    furniture: [
-      { x: 3, y: 2, w: 5, h: 2, color: 0x8a5a3c, kind: "desk" }, // desk
-      { x: 4, y: 2, w: 2, h: 1, color: 0x4ad0e8, solid: false, kind: "computer" }, // computer (on desk)
-      { x: 4, y: 4, w: 2, h: 2, color: 0x6f5c9e, kind: "chair" }, // chair
-    ],
-  },
-  {
-    id: "project-room",
-    label: "PROJECTS",
-    tiles: { x: COL_D_X, y: TOP_Y, w: NARROW, h: TOP_H },
-    floorColor: 0x2b2b45,
-    floorType: "wood",
-    doors: [{ side: "south", ...DOOR }],
-    furniture: [
-      { x: 2, y: 3, w: 6, h: 3, color: 0x8a5a3c, kind: "displayTable" }, // project display table
-      { x: 3, y: 8, w: 3, h: 2, color: 0x4ad0e8, kind: "workstation" }, // workstation
-    ],
-  },
-  {
-    id: "workshop",
-    label: "WORKSHOP",
-    tiles: { x: COL_E_X, y: TOP_Y, w: NARROW, h: TOP_H },
-    floorColor: 0x332a2a,
-    floorType: "workshop",
-    doors: [{ side: "south", ...DOOR }],
-    furniture: [
-      { x: 1, y: 2, w: 8, h: 2, color: 0x8a5a3c, kind: "workbench" }, // workbench
-      { x: 1, y: 5, w: 2, h: 3, color: 0x8894a3, kind: "toolStorage" }, // tool storage
-    ],
-  },
-  {
-    id: "study",
-    label: "STUDY",
-    tiles: { x: COL_A_X, y: BOTTOM_Y, w: WIDE, h: BOTTOM_H },
-    floorColor: 0x2b2536,
-    floorType: "wood",
-    doors: [{ side: "north", ...DOOR }],
-    windows: [bottomWindow(COL_A_X, 3, 4)],
-    furniture: [
-      { x: 1, y: 9, w: 2, h: 4, color: 0x8a5a3c, kind: "bookshelf" }, // bookshelf
-      { x: 5, y: 10, w: 4, h: 2, color: 0x8a5a3c, kind: "desk" }, // desk
-      { x: 6, y: 10, w: 2, h: 1, color: 0xd88c4a, solid: false, kind: "books" }, // books (on desk)
-    ],
-  },
-  {
-    id: "game-room",
-    label: "GAME ROOM",
-    tiles: { x: COL_B_X, y: BOTTOM_Y, w: WIDE, h: BOTTOM_H },
-    floorColor: 0x2a2440,
-    floorType: "workshop",
-    doors: [{ side: "north", ...DOOR }],
-    furniture: [
-      { x: 2, y: 10, w: 3, h: 2, color: 0x4ad0e8, kind: "console" }, // console
-      { x: 6, y: 10, w: 2, h: 2, color: 0x6f5c9e, kind: "chair" }, // chair
-      { x: 6, y: 7, w: 2, h: 2, color: 0x8a5a3c, kind: "smallTable" }, // small table
+      { x: 3, y: 1, w: 4, h: 2, color: 0x1c1626, kind: "tv" },
+      { x: 3, y: 9, w: 7, h: 3, color: 0x6f5c9e, kind: "sofa" },
+      { x: 5, y: 6, w: 2, h: 2, color: 0x8a5a3c, kind: "coffeeTable" },
+      { x: 40, y: 2, w: 2, h: 1, color: 0x4a3a63, kind: "shelf" },
     ],
   },
   {
     id: "kitchen",
+    level: 0,
     label: "KITCHEN",
-    tiles: { x: COL_C_X, y: BOTTOM_Y, w: WIDE, h: BOTTOM_H },
+    tiles: { x: 2, y: 27, w: 22, h: 7 },
     floorColor: 0x39332a,
     floorType: "tile",
-    doors: [{ side: "north", ...DOOR }],
-    windows: [bottomWindow(COL_C_X, 3, 4)],
+    doors: [{ side: "north", offset: 9, length: 3 }],
     furniture: [
-      { x: 1, y: 10, w: 8, h: 2, color: 0x8894a3, kind: "counter" }, // counter
-      { x: 1, y: 6, w: 2, h: 3, color: 0xd8d8d8, kind: "fridge" }, // refrigerator
-      { x: 5, y: 5, w: 3, h: 3, color: 0x8a5a3c, kind: "diningTable" }, // table
+      { x: 1, y: 1, w: 2, h: 3, color: 0xd8d8d8, kind: "fridge" },
+      { x: 1, y: 4, w: 8, h: 2, color: 0x8894a3, kind: "counter" },
+      { x: 12, y: 2, w: 3, h: 3, color: 0x8a5a3c, kind: "diningTable" },
     ],
   },
   {
-    id: "bathroom",
-    label: "BATHROOM",
-    tiles: { x: COL_D_X, y: BOTTOM_Y, w: NARROW, h: BOTTOM_H },
-    floorColor: 0x243336,
-    floorType: "tile",
-    doors: [{ side: "north", ...DOOR }],
-    furniture: [
-      { x: 1, y: 9, w: 3, h: 3, color: 0xbfe6ea, kind: "shower" }, // shower
-      { x: 5, y: 10, w: 2, h: 1, color: 0xd8d8d8, kind: "sink" }, // sink
-      { x: 7, y: 9, w: 2, h: 2, color: 0xd8d8d8, kind: "toilet" }, // toilet
-    ],
+    id: "cat-room",
+    level: 0,
+    label: "CAT ROOM",
+    tiles: { x: 28, y: 27, w: 22, h: 7 },
+    floorColor: 0x2c2438,
+    floorType: "wood",
+    doors: [{ side: "north", offset: 9, length: 3 }],
+    furniture: [],
   },
   {
     id: "bedroom",
+    level: 1,
     label: "BEDROOM",
-    tiles: { x: COL_E_X, y: BOTTOM_Y, w: NARROW, h: BOTTOM_H },
+    tiles: { x: 2, y: 6, w: 32, h: 22 },
     floorColor: 0x2c2438,
     floorType: "wood",
-    doors: [{ side: "north", ...DOOR }],
-    windows: [bottomWindow(COL_E_X, 3, 4)],
+    doors: [{ side: "east", offset: 4, length: 3 }],
+    windows: [{ x: px(15), y: px(5), w: px(4), h: TILE_SIZE - 2 }],
     furniture: [
-      { x: 1, y: 9, w: 5, h: 4, color: 0x6f5c9e, kind: "bed" }, // bed
-      { x: 7, y: 9, w: 2, h: 2, color: 0x8a5a3c, kind: "nightstand" }, // nightstand
+      { x: 2, y: 3, w: 6, h: 4, color: 0x6f5c9e, kind: "bed" },
+      { x: 9, y: 3, w: 2, h: 2, color: 0x8a5a3c, kind: "nightstand" },
+      { x: 2, y: 14, w: 2, h: 5, color: 0x8a5a3c, kind: "bookshelf" },
+    ],
+  },
+  {
+    id: "study",
+    level: 1,
+    label: "STUDY + COMPUTER",
+    tiles: { x: 43, y: 6, w: 17, h: 22 },
+    floorColor: 0x2b2536,
+    floorType: "wood",
+    doors: [{ side: "west", offset: 4, length: 3 }],
+    furniture: [
+      { x: 2, y: 3, w: 5, h: 2, color: 0x8a5a3c, kind: "desk" },
+      { x: 3, y: 3, w: 2, h: 1, color: 0x4ad0e8, solid: false, kind: "computer" },
+      { x: 3, y: 5, w: 2, h: 2, color: 0x6f5c9e, kind: "chair" },
+      { x: 10, y: 3, w: 2, h: 5, color: 0x8a5a3c, kind: "bookshelf" },
+      { x: 2, y: 12, w: 3, h: 2, color: 0x4ad0e8, kind: "workstation" },
+      { x: 7, y: 12, w: 6, h: 3, color: 0x8a5a3c, kind: "displayTable" },
     ],
   },
 ];
+
+/** Ground-floor stairwell nook: 51-59 x, 10-18 y. First-floor nook: 35-42 x, 10-18 y — between Bedroom and Study. */
+export const STAIRCASES: StaircaseDef[] = [
+  {
+    id: "stairs-up",
+    level: 0,
+    tiles: { x: 55, y: 12, w: 3, h: 3 },
+    toLevel: 1,
+    toTile: { x: 38, y: 16 },
+  },
+  {
+    id: "stairs-down",
+    level: 1,
+    tiles: { x: 38, y: 12, w: 3, h: 3 },
+    toLevel: 0,
+    toTile: { x: 55, y: 16 },
+  },
+];
+
+/** Finds which room's tile rect contains a world-pixel point. Rooms never overlap, so this is unambiguous. Used to derive an interactable's level from its position. */
+export function roomAt(worldX: number, worldY: number): RoomDef | undefined {
+  return ROOMS.find((room) => {
+    const x = px(room.tiles.x);
+    const y = px(room.tiles.y);
+    return worldX >= x && worldX < x + px(room.tiles.w) && worldY >= y && worldY < y + px(room.tiles.h);
+  });
+}
