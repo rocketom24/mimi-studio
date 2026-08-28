@@ -11,6 +11,7 @@ import {
 } from "@/game/config/world";
 import { BOTTOM_Y, ROOMS, TOP_Y } from "@/game/world/rooms";
 import type { PixelRect, RoomDef } from "@/game/types/world";
+import { createGameText, ROOM_LABEL_STYLE } from "@/game/ui/textStyles";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
@@ -99,13 +100,8 @@ export function createFurniture(scene: Phaser.Scene, room: RoomDef): void {
 
 export function createRoomLabel(scene: Phaser.Scene, room: RoomDef): void {
   const centerX = px(room.tiles.x) + px(room.tiles.w) / 2;
-  const topY = px(room.tiles.y) + 4;
-  scene.add
-    .text(centerX, topY, room.label, {
-      fontFamily: "monospace",
-      fontSize: "6px",
-      color: "#d8cdf0",
-    })
+  const topY = px(room.tiles.y) + 1;
+  createGameText(scene, centerX, topY, room.label, ROOM_LABEL_STYLE)
     .setOrigin(0.5, 0)
-    .setAlpha(0.85);
+    .setAlpha(0.95);
 }

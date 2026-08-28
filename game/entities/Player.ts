@@ -151,6 +151,13 @@ export class Player {
     this.sprite.y += this.appliedBob;
   }
 
+  /** Zeroes velocity and returns to idle — used to freeze Mimi while a UI panel has input focus. */
+  stop(): void {
+    const body = this.sprite.body as Phaser.Physics.Arcade.Body;
+    body.setVelocity(0, 0);
+    this.setAnimationState("idle");
+  }
+
   setFacing(facing: Facing): void {
     if (this.state.facing === facing) return;
     this.state = { ...this.state, facing };
