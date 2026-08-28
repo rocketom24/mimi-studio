@@ -19,6 +19,15 @@ export interface FurniturePiece {
   w: number;
   h: number;
   color: number;
+  /** Whether Mimi collides with this piece. Defaults to true when omitted. */
+  solid?: boolean;
+}
+
+export interface PixelRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface RoomDef {

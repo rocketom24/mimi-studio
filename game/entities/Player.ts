@@ -1,11 +1,18 @@
 import * as Phaser from "phaser";
-import { TILE_SIZE, WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { TILE_SIZE } from "@/game/config/world";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import type { InputSource } from "@/game/types/input";
 import type { Facing, PlayerState } from "@/game/types/player";
 
 export const PLAYER_WIDTH = 10;
 export const PLAYER_HEIGHT = 16;
+
+// Compact body over her lower body/legs, excluding hair and head so those
+// never snag on walls. Texture-local: shirt+legs span x[2,8) y[8,16).
+const BODY_WIDTH = 6;
+const BODY_HEIGHT = 8;
+const BODY_OFFSET_X = 2;
+const BODY_OFFSET_Y = 8;
 
 // Entry room floor, a few tiles up from the south door (tiles 5-7 @ row 15),
 // clear of the mail shelf and mat furniture.
@@ -36,10 +43,6 @@ function textureKey(facing: Facing): string {
 function facingFromDelta(dx: number, dy: number): Facing {
   if (dy !== 0) return dy < 0 ? "up" : "down";
   return dx < 0 ? "left" : "right";
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
 }
 
 /** Draws the placeholder Mimi silhouette for one facing direction into its own texture. */
@@ -89,25 +92,27 @@ function generateFacingTexture(scene: Phaser.Scene, facing: Facing): void {
  * Collision belongs to a later phase; input source is swappable (keyboard now).
  */
 export class Player {
-  readonly sprite: Phaser.GameObjects.Sprite;
+  readonly sprite: Phaser.Physics.Arcade.Sprite;
   private state: PlayerState;
-  private x: number;
-  private y: number;
   private readonly input: InputSource;
   private readonly bob = { offset: 0 };
+  private appliedBob = 0;
   private readonly bobTween: Phaser.Tweens.Tween;
 
   constructor(scene: Phaser.Scene, x: number, y: number, input?: InputSource) {
     for (const facing of FACINGS) generateFacingTexture(scene, facing);
 
     this.state = { facing: "down", animationState: "idle" };
-    this.x = x;
-    this.y = y;
     this.input = input ?? new KeyboardInput(scene);
 
-    this.sprite = scene.add.sprite(x, y, textureKey(this.state.facing));
+    this.sprite = scene.physics.add.sprite(x, y, textureKey(this.state.facing));
     this.sprite.setOrigin(0.5, 1);
     this.sprite.setDepth(PLAYER_DEPTH);
+
+    const body = this.sprite.body as Phaser.Physics.Arcade.Body;
+    body.setSize(BODY_WIDTH, BODY_HEIGHT);
+    body.setOffset(BODY_OFFSET_X, BODY_OFFSET_Y);
+    body.setCollideWorldBounds(true);
 
     this.bobTween = scene.tweens.add({
       targets: this.bob,
@@ -119,7 +124,10 @@ export class Player {
     });
   }
 
-  update(delta: number): void {
+  update(): void {
+    // Undo last frame's cosmetic bob before physics-derived position is used.
+    this.sprite.y -= this.appliedBob;
+
     const intent = this.input.getIntent();
     let dx = 0;
     let dy = 0;
@@ -129,19 +137,18 @@ export class Player {
     if (intent.right) dx += 1;
 
     const moving = dx !== 0 || dy !== 0;
+    const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     if (moving) {
       const length = Math.hypot(dx, dy);
-      const distance = PLAYER_SPEED * (delta / 1000);
-      const stepX = (dx / length) * distance;
-      const stepY = (dy / length) * distance;
-
-      this.x = clamp(this.x + stepX, PLAYER_WIDTH / 2, WORLD_PIXEL_WIDTH - PLAYER_WIDTH / 2);
-      this.y = clamp(this.y + stepY, PLAYER_HEIGHT, WORLD_PIXEL_HEIGHT);
+      body.setVelocity((dx / length) * PLAYER_SPEED, (dy / length) * PLAYER_SPEED);
       this.setFacing(facingFromDelta(dx, dy));
+    } else {
+      body.setVelocity(0, 0);
     }
     this.setAnimationState(moving ? "walking" : "idle");
 
-    this.sprite.setPosition(this.x, this.y + this.bob.offset);
+    this.appliedBob = this.bob.offset;
+    this.sprite.y += this.appliedBob;
   }
 
   setFacing(facing: Facing): void {

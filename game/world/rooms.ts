@@ -24,7 +24,7 @@ export const ROOMS: RoomDef[] = [
     doors: [{ side: "south", ...DOOR }],
     furniture: [
       { x: 2, y: 2, w: 2, h: 1, color: 0x4a3a63 }, // mail / contact shelf
-      { x: 8, y: 9, w: 3, h: 3, color: 0x1c1626 }, // mat
+      { x: 8, y: 9, w: 3, h: 3, color: 0x1c1626, solid: false }, // mat
     ],
   },
   {
@@ -47,7 +47,7 @@ export const ROOMS: RoomDef[] = [
     doors: [{ side: "south", ...DOOR }],
     furniture: [
       { x: 3, y: 2, w: 5, h: 2, color: 0x8a5a3c }, // desk
-      { x: 4, y: 2, w: 2, h: 1, color: 0x4ad0e8 }, // computer
+      { x: 4, y: 2, w: 2, h: 1, color: 0x4ad0e8, solid: false }, // computer (on desk)
       { x: 4, y: 4, w: 2, h: 2, color: 0x6f5c9e }, // chair
     ],
   },
@@ -82,7 +82,7 @@ export const ROOMS: RoomDef[] = [
     furniture: [
       { x: 1, y: 9, w: 2, h: 4, color: 0x8a5a3c }, // bookshelf
       { x: 5, y: 10, w: 4, h: 2, color: 0x8a5a3c }, // desk
-      { x: 6, y: 10, w: 2, h: 1, color: 0xd88c4a }, // books
+      { x: 6, y: 10, w: 2, h: 1, color: 0xd88c4a, solid: false }, // books (on desk)
     ],
   },
   {
