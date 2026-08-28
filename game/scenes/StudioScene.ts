@@ -1,4 +1,13 @@
 import * as Phaser from "phaser";
+import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { ROOMS } from "@/game/world/rooms";
+import {
+  createFurniture,
+  createRoom,
+  createRoomLabel,
+  createStudioBackground,
+  createWalls,
+} from "@/game/world/studioWorld";
 
 export class StudioScene extends Phaser.Scene {
   constructor() {
@@ -6,30 +15,16 @@ export class StudioScene extends Phaser.Scene {
   }
 
   create(): void {
-    const { width, height } = this.scale;
+    createStudioBackground(this);
+    createWalls(this);
 
-    this.cameras.main.setBackgroundColor("#1a1423");
+    for (const room of ROOMS) {
+      createRoom(this, room);
+      createFurniture(this, room);
+      createRoomLabel(this, room);
+    }
 
-    const floor = this.add.graphics();
-    floor.fillStyle(0x2e2440, 1);
-    floor.fillRect(20, height - 60, width - 40, 40);
-    floor.lineStyle(2, 0x6f5c9e, 1);
-    floor.strokeRect(20, height - 60, width - 40, 40);
-
-    this.add
-      .text(width / 2, height / 2 - 20, "MIMI STUDIO", {
-        fontFamily: "monospace",
-        fontSize: "20px",
-        color: "#f2e9ff",
-      })
-      .setOrigin(0.5);
-
-    this.add
-      .text(width / 2, height / 2 + 6, "Phaser 3 is running", {
-        fontFamily: "monospace",
-        fontSize: "10px",
-        color: "#a692cf",
-      })
-      .setOrigin(0.5);
+    this.cameras.main.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
+    this.cameras.main.centerOn(WORLD_PIXEL_WIDTH / 2, WORLD_PIXEL_HEIGHT / 2);
   }
 }
