@@ -43,9 +43,9 @@ function collectDoorGaps(rooms: RoomDef[]): WallGap[] {
     for (const door of room.doors) {
       const from = px(door.offset) + (door.side === "north" || door.side === "south" ? x : y);
       const to = from + px(door.length);
-      if (door.side === "north") gaps.push({ axis: "h", pos: y, from, to });
+      if (door.side === "north") gaps.push({ axis: "h", pos: y - TILE_SIZE, from, to });
       else if (door.side === "south") gaps.push({ axis: "h", pos: y + h, from, to });
-      else if (door.side === "west") gaps.push({ axis: "v", pos: x, from, to });
+      else if (door.side === "west") gaps.push({ axis: "v", pos: x - TILE_SIZE, from, to });
       else gaps.push({ axis: "v", pos: x + w, from, to });
     }
   }
