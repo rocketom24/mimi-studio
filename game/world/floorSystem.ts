@@ -1,5 +1,5 @@
 import * as Phaser from "phaser";
-import { TILE_SIZE, WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { TILE_SIZE } from "@/game/config/world";
 import { darken, lighten } from "@/game/world/palette";
 import { DEPTH } from "@/game/world/depth";
 import { project, projectOriented, toViewRect } from "@/game/world/projection";
@@ -88,24 +88,6 @@ export function createRoomFloor(scene: Phaser.Scene, room: RoomDef, orientation:
     ],
     true,
   );
-
-  return g;
-}
-
-/** Sparse dot pattern for the central corridor, distinct from every room floor. */
-export function createCorridorFloor(scene: Phaser.Scene, baseColor: number, orientation: ViewOrientation): Phaser.GameObjects.Graphics {
-  const g = scene.add.graphics().setDepth(DEPTH.FLOOR);
-  g.fillStyle(baseColor, 1);
-  g.fillPoints(floorQuad(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT, orientation), true);
-
-  g.fillStyle(lighten(baseColor, 14), 0.25);
-  const step = TILE_SIZE * 2;
-  for (let wx = step; wx < WORLD_PIXEL_WIDTH; wx += step) {
-    for (let wy = step; wy < WORLD_PIXEL_HEIGHT; wy += step) {
-      const p = projectOriented(wx, wy, orientation);
-      g.fillRect(p.x, p.y, 1, 1);
-    }
-  }
 
   return g;
 }
