@@ -1,16 +1,16 @@
 import * as Phaser from "phaser";
-import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { TILE_SIZE, WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
 import { ORIENTATIONS, projectedSizeFor } from "@/game/world/projection";
 import type { ViewOrientation } from "@/game/world/projection";
 import { ROOMS, STAIRCASES } from "@/game/world/rooms";
 import { LEVELS } from "@/game/types/world";
-import type { Level } from "@/game/types/world";
+import type { Level, StaircaseDef } from "@/game/types/world";
 import { createRoomLabel } from "@/game/world/studioWorld";
 import { createRoomFloor } from "@/game/world/floorSystem";
 import { createDoorDecorations, createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
 import { createFurniture } from "@/game/world/furnitureSystem";
 import { createWorldCollision, setGroupEnabled } from "@/game/world/collision";
-import { createStaircaseVisual } from "@/game/world/staircase";
+import { createStaircaseVisual, isOnStaircase } from "@/game/world/staircase";
 import { updateWallOcclusion } from "@/game/world/occlusionSystem";
 import { CameraController, CAMERA_EVENTS, type RotateStartPayload } from "@/game/world/cameraController";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
@@ -56,6 +56,7 @@ export class StudioScene extends Phaser.Scene {
     return this.interactionPrompts.get(this.activeLevel)!;
   }
   private inputLocked = false;
+  private transitioningFloor = false;
   /** Shared vertical hinge (world/projected X) both layers fold toward during a rotation — captured once per rotation so it doesn't drift as the camera nudges. */
   private rotationPivotX = 0;
   private activeLevel: Level = 0;
@@ -134,6 +135,13 @@ export class StudioScene extends Phaser.Scene {
     );
     this.activeInteractionSystem.update(this.player.worldX, this.player.worldY);
     this.activeInteractionPrompt.update();
+
+    if (!this.transitioningFloor) {
+      const stair = STAIRCASES.find(
+        (s) => s.level === this.activeLevel && isOnStaircase(s, this.player.worldX, this.player.worldY),
+      );
+      if (stair) this.beginFloorTransition(stair);
+    }
   }
 
   /** Called by React when a portfolio panel is closed via its own close button (not ESC). */
@@ -264,6 +272,65 @@ export class StudioScene extends Phaser.Scene {
     this.activeInteractionPrompt.setHidden(false);
     this.inputLocked = false;
     this.events.emit(SCENE_EVENTS.CameraRotateEnd);
+  }
+
+  private beginFloorTransition(stair: StaircaseDef): void {
+    this.transitioningFloor = true;
+    this.inputLocked = true;
+    this.player.stop();
+    this.activeInteractionPrompt.setHidden(true);
+
+    const orientation = this.cameraController.getOrientation();
+    const fromLevel = this.activeLevel;
+    const toLevel = stair.toLevel;
+    const fromObjects = this.layerObjects.get(this.layerKey(fromLevel, orientation))!;
+    const toObjects = this.layerObjects.get(this.layerKey(toLevel, orientation))!;
+
+    const fadeOut = { alpha: 1 };
+    this.tweens.add({
+      targets: fadeOut,
+      alpha: 0,
+      duration: 250,
+      ease: "Sine.easeInOut",
+      onUpdate: () => {
+        for (const { obj } of fromObjects) obj.setAlpha(fadeOut.alpha);
+      },
+      onComplete: () => {
+        for (const { obj } of fromObjects) {
+          obj.setVisible(false);
+          obj.setAlpha(1);
+        }
+
+        this.activeLevel = toLevel;
+        const targetX = stair.toTile.x * TILE_SIZE + TILE_SIZE / 2;
+        const targetY = stair.toTile.y * TILE_SIZE + TILE_SIZE / 2;
+        this.player.sprite.setPosition(targetX, targetY);
+        this.player.reprojectVisual(orientation);
+
+        setGroupEnabled(this.collisionGroups.get(fromLevel)!, false);
+        setGroupEnabled(this.collisionGroups.get(toLevel)!, true);
+
+        for (const { obj } of toObjects) {
+          obj.setVisible(true);
+          obj.setAlpha(0);
+        }
+        const fadeIn = { alpha: 0 };
+        this.tweens.add({
+          targets: fadeIn,
+          alpha: 1,
+          duration: 250,
+          ease: "Sine.easeInOut",
+          onUpdate: () => {
+            for (const { obj } of toObjects) obj.setAlpha(fadeIn.alpha);
+          },
+          onComplete: () => {
+            this.activeInteractionPrompt.setHidden(false);
+            this.transitioningFloor = false;
+            this.inputLocked = false;
+          },
+        });
+      },
+    });
   }
 
   private handleInteractionOpen(interactable: Interactable): void {
