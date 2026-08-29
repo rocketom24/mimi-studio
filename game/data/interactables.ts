@@ -16,53 +16,52 @@ function roomPoint(roomId: string, localTileX: number, localTileY: number): { x:
   };
 }
 
-/** Every interactable object in the studio. Positions derive from ROOMS so they never drift from the drawn layout. */
 export const INTERACTABLES: Interactable[] = [
   {
     id: "contact",
-    ...roomPoint("entry", 3, 4),
+    ...roomPoint("entrance", 3, 2),
     radius: INTERACTION_RADIUS,
     prompt: "[E] Contact Mimi",
     panelId: "contact",
   },
   {
     id: "about",
-    ...roomPoint("living-room", 5, 8),
+    ...roomPoint("living-room", 6, 10),
     radius: INTERACTION_RADIUS,
     prompt: "[E] About Mimi",
     panelId: "about",
   },
   {
     id: "experience",
-    ...roomPoint("office", 4, 6),
+    ...roomPoint("living-room", 41, 3),
     radius: INTERACTION_RADIUS,
     prompt: "[E] View Experience",
     panelId: "experience",
   },
   {
     id: "quick-cv",
-    ...roomPoint("office", 8, 6),
+    ...roomPoint("study", 3, 3),
     radius: INTERACTION_RADIUS,
     prompt: "[E] Quick CV",
     panelId: "cv",
   },
   {
     id: "projects",
-    ...roomPoint("project-room", 4, 7),
+    ...roomPoint("study", 9, 13),
     radius: INTERACTION_RADIUS,
     prompt: "[E] View Projects",
     panelId: "projects",
   },
   {
     id: "skills",
-    ...roomPoint("workshop", 4, 4),
+    ...roomPoint("study", 3, 13),
     radius: INTERACTION_RADIUS,
     prompt: "[E] View Skills",
     panelId: "skills",
   },
   {
     id: "education",
-    ...roomPoint("study", 6, 8),
+    ...roomPoint("bedroom", 3, 16),
     radius: INTERACTION_RADIUS,
     prompt: "[E] Education",
     panelId: "education",
