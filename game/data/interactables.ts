@@ -18,6 +18,7 @@ function roomPoint(roomId: string, localTileX: number, localTileY: number): { x:
   };
 }
 
+/** Every interactable object in the studio. Positions derive from ROOMS so they never drift from the drawn layout. */
 export const INTERACTABLES: Interactable[] = [
   {
     id: "contact",

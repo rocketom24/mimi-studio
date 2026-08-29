@@ -26,10 +26,15 @@ export function createStaircaseVisual(scene: Phaser.Scene, stair: StaircaseDef, 
   g.fillStyle(NOOK_FLOOR_COLOR, 1);
   g.fillPoints([nw, ne, se, sw], true);
 
+  const tx = px(stair.trigger.x);
+  const ty = px(stair.trigger.y);
+  const tw = px(stair.trigger.w);
+  const th = px(stair.trigger.h);
+
   const stepCount = 3;
-  const stepDepth = h / stepCount;
+  const stepDepth = th / stepCount;
   for (let i = 0; i < stepCount; i++) {
-    const stepRect = { x, y: y + i * stepDepth, w, h: stepDepth };
+    const stepRect = { x: tx, y: ty + i * stepDepth, w: tw, h: stepDepth };
     const view = toViewRect(stepRect, orientation);
     const stepColor = i % 2 === 0 ? lighten(STEP_COLOR, 8) : darken(STEP_COLOR, 8);
     const riseZ = (stepCount - i) * 3;

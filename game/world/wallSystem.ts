@@ -204,9 +204,11 @@ export function createDoorDecorations(scene: Phaser.Scene, orientation: ViewOrie
       ? { x: gap.from, y: gap.pos, w: gap.to - gap.from, h: TILE_SIZE }
       : { x: gap.pos, y: gap.from, w: TILE_SIZE, h: gap.to - gap.from },
   );
-  if (level === 0) {
-    gapRects.push({ x: px(EXTERIOR_DOOR.x), y: 0, w: px(EXTERIOR_DOOR.length), h: TILE_SIZE });
-  }
+  // Note: EXTERIOR_DOOR is deliberately NOT pushed as its own gap here — it's
+  // defined to align exactly with Entrance's own declared north door (see
+  // EXTERIOR_DOOR's comment in config/world.ts), so collectDoorGaps(rooms)
+  // above already produced an identical rect for it. Pushing both would draw
+  // the same threshold/shadow decoration twice at the same pixels.
 
   for (const gap of gapRects) {
     const view = toViewRect(gap, orientation);

@@ -151,6 +151,7 @@ export class StudioScene extends Phaser.Scene {
 
   /** Called by the mobile [E] button — same trigger the keyboard E key uses internally. */
   interact(): void {
+    if (this.inputLocked) return;
     this.activeInteractionSystem.interact();
   }
 
@@ -340,7 +341,7 @@ export class StudioScene extends Phaser.Scene {
   }
 
   private handleEscape(): void {
-    if (!this.inputLocked || this.cameraController.isRotating()) return;
+    if (!this.inputLocked || this.cameraController.isRotating() || this.transitioningFloor) return;
     this.inputLocked = false;
     this.events.emit(SCENE_EVENTS.InteractionClose);
   }

@@ -1,4 +1,4 @@
-import type { Level, RoomDef, StaircaseDef } from "@/game/types/world";
+import type { RoomDef, StaircaseDef } from "@/game/types/world";
 import { TILE_SIZE } from "@/game/config/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
@@ -95,11 +95,12 @@ export const ROOMS: RoomDef[] = [
 ];
 
 /**
- * Ground-floor stairwell nook: 51-59 x, 10-18 y — its west wall (x-1=50)
- * meets Living Room's east wall (2+48=50) exactly, so Living Room's east
- * door opens straight into it. First-floor nook: 35-42 x, 10-18 y — its
- * west wall (35-1=34) meets Bedroom's east wall (2+32=34), and its east
- * wall (35+7=42) meets Study's west wall (43-1=42).
+ * Ground-floor stairwell nook: x:51,w:8, y:10,h:8 (tiles 51-58, 10-17,
+ * half-open per TileRect convention) — its west wall (x-1=50) meets Living
+ * Room's east wall (2+48=50) exactly, so Living Room's east door opens
+ * straight into it. First-floor nook: x:35,w:7, y:10,h:8 (tiles 35-41,
+ * 10-17) — its west wall (35-1=34) meets Bedroom's east wall (2+32=34), and
+ * its east wall (35+7=42) meets Study's west wall (43-1=42).
  *
  * `tiles` is the whole walled/walkable nook footprint (walls wrap it via
  * zoneEdgeWalls, unaffected by the trigger split below). `trigger` is the
@@ -132,21 +133,3 @@ export const STAIRCASES: StaircaseDef[] = [
     toTile: { x: 48, y: 15 },
   },
 ];
-
-/**
- * Finds which room ON A GIVEN LEVEL has a tile rect containing a world-pixel
- * point. Rooms never overlap within one level, but both levels deliberately
- * reuse the identical 0-512x0-288 coordinate space — so `level` is required,
- * not optional: without it, a point inside both a level-0 and a level-1
- * room's rect would resolve to whichever room happens to appear first in
- * `ROOMS`, silently misattributing it. Used to test whether a world point
- * (e.g. an interactable's position) belongs to a specific level.
- */
-export function roomAt(worldX: number, worldY: number, level: Level): RoomDef | undefined {
-  return ROOMS.find((room) => {
-    if (room.level !== level) return false;
-    const x = px(room.tiles.x);
-    const y = px(room.tiles.y);
-    return worldX >= x && worldX < x + px(room.tiles.w) && worldY >= y && worldY < y + px(room.tiles.h);
-  });
-}

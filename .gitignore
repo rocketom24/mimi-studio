@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# browser-automation testing debris
+/.playwright-mcp/
+/*.png

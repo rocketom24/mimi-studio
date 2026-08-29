@@ -18,7 +18,7 @@ const BODY_OFFSET_X = 2;
 const BODY_OFFSET_Y = 8;
 
 // Entrance floor (world tiles x4-16, y1-9), clear of the shelf at world
-// (6,2) and the mat at world (9,6)-(12,8).
+// (6,2) and the mat at world (9,6)-(11,7).
 export const PLAYER_SPAWN_TILE_X = 7;
 export const PLAYER_SPAWN_TILE_Y = 3;
 export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
