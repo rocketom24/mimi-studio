@@ -9,7 +9,7 @@ import { createRoomLabel } from "@/game/world/studioWorld";
 import { createRoomFloor } from "@/game/world/floorSystem";
 import { createDoorDecorations, createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
 import { createFurniture } from "@/game/world/furnitureSystem";
-import { createWorldCollision } from "@/game/world/collision";
+import { createWorldCollision, setGroupEnabled } from "@/game/world/collision";
 import { createStaircaseVisual } from "@/game/world/staircase";
 import { updateWallOcclusion } from "@/game/world/occlusionSystem";
 import { CameraController, CAMERA_EVENTS, type RotateStartPayload } from "@/game/world/cameraController";
@@ -51,6 +51,7 @@ export class StudioScene extends Phaser.Scene {
   /** Shared vertical hinge (world/projected X) both layers fold toward during a rotation — captured once per rotation so it doesn't drift as the camera nudges. */
   private rotationPivotX = 0;
   private activeLevel: Level = 0;
+  private readonly collisionGroups = new Map<Level, Phaser.Physics.Arcade.StaticGroup>();
   private readonly layerObjects = new Map<string, TrackedObject[]>();
   private readonly wallSegmentsByOrientation = new Map<string, WallSegment[]>();
 
@@ -67,11 +68,16 @@ export class StudioScene extends Phaser.Scene {
     this.buildOrientationLayers();
 
     this.physics.world.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
-    const collision = createWorldCollision(this, this.activeLevel);
 
     const input = new CombinedInput([new KeyboardInput(this), this.touchInput]);
     this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, input);
-    this.physics.add.collider(this.player.sprite, collision);
+
+    for (const level of LEVELS) {
+      const group = createWorldCollision(this, level);
+      setGroupEnabled(group, level === this.activeLevel);
+      this.collisionGroups.set(level, group);
+      this.physics.add.collider(this.player.sprite, group);
+    }
 
     const size = projectedSizeFor(this.cameraController.getOrientation());
     this.cameras.main.setBounds(0, 0, size.width, size.height);
