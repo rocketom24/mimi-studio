@@ -1126,6 +1126,8 @@ git commit -m "feat: build collision per level, only the active level blocks mov
 
 ### Task 11: StudioScene — per-level interaction systems
 
+**Post-implementation amendment:** the `roomAt`-based filter below turned out to be insufficient — Living Room's (level 0) footprint is a geometric subset of Bedroom+Study's (level 1) combined footprint (both floors share the same coordinate space by design), so a level-scoped point-in-rect test can still match the wrong level for a point that's geometrically inside both. The actual fix (applied during this task's review fix loop) attaches `level: Level` to `Interactable` directly at data-definition time — `game/types/interaction.ts` gains the field, `game/data/interactables.ts`'s `roomPoint()` returns it (it already resolves the specific room by id, so `room.level` is on hand with no extra lookup) — and `StudioScene.ts` filters on `i.level === level` with no geometry involved. `roomAt(worldX, worldY, level)` (below) is still correctly implemented and kept as a general-purpose utility, but is not what this task's filter ends up using.
+
 **Files:**
 - Modify: `game/scenes/StudioScene.ts`
 
