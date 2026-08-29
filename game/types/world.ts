@@ -80,6 +80,7 @@ export interface StaircaseDef {
   id: string;
   level: Level;
   tiles: TileRect;
+  trigger: TileRect;
   toLevel: Level;
   toTile: { x: number; y: number };
 }

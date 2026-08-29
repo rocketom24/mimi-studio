@@ -101,17 +101,25 @@ export const ROOMS: RoomDef[] = [
  * west wall (35-1=34) meets Bedroom's east wall (2+32=34), and its east
  * wall (35+7=42) meets Study's west wall (43-1=42).
  *
- * The whole nook rect IS the transition trigger (no separate smaller
- * "step" sub-zone) — stepping anywhere in it starts the floor change.
+ * `tiles` is the whole walled/walkable nook footprint (walls wrap it via
+ * zoneEdgeWalls, unaffected by the trigger split below). `trigger` is the
+ * sub-zone that actually starts the floor change — on the ground floor
+ * that's the whole nook (Living Room is its only connecting room, so
+ * there's no walkable path to protect), but on the first floor Bedroom
+ * and Study both open into the SAME nook at the same height (world
+ * y10-13), so the trigger is narrowed to the nook's bottom half only —
+ * a straight walk between the two rooms at door height never enters it.
  * Each `toTile` lands just inside the DESTINATION room at its doorway
- * threshold (not inside the nook), so arrival is never inside a trigger
- * zone and no re-trigger cooldown is needed.
+ * threshold (not inside the nook, and not inside the new narrower
+ * trigger either), so arrival is never inside a trigger zone and no
+ * re-trigger cooldown is needed.
  */
 export const STAIRCASES: StaircaseDef[] = [
   {
     id: "stairs-up",
     level: 0,
     tiles: { x: 51, y: 10, w: 8, h: 8 },
+    trigger: { x: 51, y: 10, w: 8, h: 8 },
     toLevel: 1,
     toTile: { x: 32, y: 11 },
   },
@@ -119,6 +127,7 @@ export const STAIRCASES: StaircaseDef[] = [
     id: "stairs-down",
     level: 1,
     tiles: { x: 35, y: 10, w: 7, h: 8 },
+    trigger: { x: 35, y: 14, w: 7, h: 4 },
     toLevel: 0,
     toTile: { x: 48, y: 15 },
   },

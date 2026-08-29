@@ -46,7 +46,7 @@ export function createStaircaseVisual(scene: Phaser.Scene, stair: StaircaseDef, 
 
 /** Whether a world-pixel point sits inside a staircase's trigger footprint. */
 export function isOnStaircase(stair: StaircaseDef, worldX: number, worldY: number): boolean {
-  const x = px(stair.tiles.x);
-  const y = px(stair.tiles.y);
-  return worldX >= x && worldX < x + px(stair.tiles.w) && worldY >= y && worldY < y + px(stair.tiles.h);
+  const x = px(stair.trigger.x);
+  const y = px(stair.trigger.y);
+  return worldX >= x && worldX < x + px(stair.trigger.w) && worldY >= y && worldY < y + px(stair.trigger.h);
 }
