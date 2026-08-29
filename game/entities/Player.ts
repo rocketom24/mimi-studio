@@ -17,10 +17,10 @@ const BODY_HEIGHT = 8;
 const BODY_OFFSET_X = 2;
 const BODY_OFFSET_Y = 8;
 
-// Entry room floor, a few tiles up from the south door (tiles 5-7 @ row 15),
-// clear of the mail shelf and mat furniture.
+// Entrance floor (world tiles x4-16, y1-9), clear of the shelf at world
+// (6,2) and the mat at world (9,6)-(12,8).
 export const PLAYER_SPAWN_TILE_X = 7;
-export const PLAYER_SPAWN_TILE_Y = 12;
+export const PLAYER_SPAWN_TILE_Y = 3;
 export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 
