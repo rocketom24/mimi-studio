@@ -2,7 +2,7 @@ import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
 import { ORIENTATIONS, projectedSizeFor } from "@/game/world/projection";
 import type { ViewOrientation } from "@/game/world/projection";
-import { ROOMS, STAIRCASES } from "@/game/world/rooms";
+import { ROOMS, STAIRCASES, roomAt } from "@/game/world/rooms";
 import { LEVELS } from "@/game/types/world";
 import type { Level } from "@/game/types/world";
 import { createRoomLabel } from "@/game/world/studioWorld";
@@ -45,8 +45,16 @@ export class StudioScene extends Phaser.Scene {
   /** Written by the mobile D-pad overlay; read by Player alongside KeyboardInput. */
   readonly touchInput = new TouchInput();
   private cameraController!: CameraController;
-  private interactionSystem!: InteractionSystem;
-  private interactionPrompt!: InteractionPrompt;
+  private readonly interactionSystems = new Map<Level, InteractionSystem>();
+  private readonly interactionPrompts = new Map<Level, InteractionPrompt>();
+
+  private get activeInteractionSystem(): InteractionSystem {
+    return this.interactionSystems.get(this.activeLevel)!;
+  }
+
+  private get activeInteractionPrompt(): InteractionPrompt {
+    return this.interactionPrompts.get(this.activeLevel)!;
+  }
   private inputLocked = false;
   /** Shared vertical hinge (world/projected X) both layers fold toward during a rotation — captured once per rotation so it doesn't drift as the camera nudges. */
   private rotationPivotX = 0;
@@ -84,14 +92,20 @@ export class StudioScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
     this.cameras.main.setDeadzone(48, 28);
 
-    this.interactionSystem = new InteractionSystem(this, INTERACTABLES);
-    this.interactionPrompt = new InteractionPrompt(this, this.interactionSystem, this.player);
-    this.interactionSystem.on(INTERACTION_EVENTS.Open, this.handleInteractionOpen, this);
-    this.interactionSystem.on(
-      INTERACTION_EVENTS.Prompt,
-      (interactable: Interactable | null) => this.events.emit(SCENE_EVENTS.InteractionPromptChange, interactable),
-      this,
-    );
+    for (const level of LEVELS) {
+      const levelInteractables = INTERACTABLES.filter((i) => roomAt(i.x, i.y)?.level === level);
+      const system = new InteractionSystem(this, levelInteractables);
+      const prompt = new InteractionPrompt(this, system, this.player);
+      system.on(INTERACTION_EVENTS.Open, this.handleInteractionOpen, this);
+      system.on(
+        INTERACTION_EVENTS.Prompt,
+        (interactable: Interactable | null) => this.events.emit(SCENE_EVENTS.InteractionPromptChange, interactable),
+        this,
+      );
+      if (level !== this.activeLevel) prompt.setHidden(true);
+      this.interactionSystems.set(level, system);
+      this.interactionPrompts.set(level, prompt);
+    }
 
     this.cameraController.on(CAMERA_EVENTS.RotateStart, this.handleRotateStart, this);
     this.cameraController.on(CAMERA_EVENTS.RotateComplete, this.handleRotateComplete, this);
@@ -118,8 +132,8 @@ export class StudioScene extends Phaser.Scene {
       this.player.worldY,
       orientation,
     );
-    this.interactionSystem.update(this.player.worldX, this.player.worldY);
-    this.interactionPrompt.update();
+    this.activeInteractionSystem.update(this.player.worldX, this.player.worldY);
+    this.activeInteractionPrompt.update();
   }
 
   /** Called by React when a portfolio panel is closed via its own close button (not ESC). */
@@ -129,7 +143,7 @@ export class StudioScene extends Phaser.Scene {
 
   /** Called by the mobile [E] button — same trigger the keyboard E key uses internally. */
   interact(): void {
-    this.interactionSystem.interact();
+    this.activeInteractionSystem.interact();
   }
 
   /** Called by the desktop Q key and the mobile ↺ button. No-op while a panel is open or a rotation is already in progress. */
@@ -219,7 +233,7 @@ export class StudioScene extends Phaser.Scene {
     this.inputLocked = true;
     this.rotationPivotX = this.cameras.main.worldView.centerX;
     this.player.stop();
-    this.interactionPrompt.setHidden(true);
+    this.activeInteractionPrompt.setHidden(true);
     this.events.emit(SCENE_EVENTS.CameraRotateStart);
 
     for (const { obj } of this.layerObjects.get(this.layerKey(this.activeLevel, to))!) obj.setVisible(true);
@@ -247,7 +261,7 @@ export class StudioScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
     this.player.reprojectVisual(orientation);
 
-    this.interactionPrompt.setHidden(false);
+    this.activeInteractionPrompt.setHidden(false);
     this.inputLocked = false;
     this.events.emit(SCENE_EVENTS.CameraRotateEnd);
   }
