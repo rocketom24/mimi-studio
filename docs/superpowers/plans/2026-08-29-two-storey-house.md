@@ -189,21 +189,33 @@ export const ROOMS: RoomDef[] = [
   },
 ];
 
-/** Ground-floor stairwell nook: 51-59 x, 10-18 y. First-floor nook: 35-42 x, 10-18 y — between Bedroom and Study. */
+/**
+ * Ground-floor stairwell nook: 51-59 x, 10-18 y — its west wall (x-1=50)
+ * meets Living Room's east wall (2+48=50) exactly, so Living Room's east
+ * door opens straight into it. First-floor nook: 35-42 x, 10-18 y — its
+ * west wall (35-1=34) meets Bedroom's east wall (2+32=34), and its east
+ * wall (35+7=42) meets Study's west wall (43-1=42).
+ *
+ * The whole nook rect IS the transition trigger (no separate smaller
+ * "step" sub-zone) — stepping anywhere in it starts the floor change.
+ * Each `toTile` lands just inside the DESTINATION room at its doorway
+ * threshold (not inside the nook), so arrival is never inside a trigger
+ * zone and no re-trigger cooldown is needed.
+ */
 export const STAIRCASES: StaircaseDef[] = [
   {
     id: "stairs-up",
     level: 0,
-    tiles: { x: 55, y: 12, w: 3, h: 3 },
+    tiles: { x: 51, y: 10, w: 8, h: 8 },
     toLevel: 1,
-    toTile: { x: 38, y: 16 },
+    toTile: { x: 32, y: 11 },
   },
   {
     id: "stairs-down",
     level: 1,
-    tiles: { x: 38, y: 12, w: 3, h: 3 },
+    tiles: { x: 35, y: 10, w: 7, h: 8 },
     toLevel: 0,
-    toTile: { x: 55, y: 16 },
+    toTile: { x: 48, y: 15 },
   },
 ];
 
@@ -1395,8 +1407,8 @@ Expected: zero errors.
 
 With `npm run dev` running, use Playwright:
 
-- Navigate, walk from spawn through the Living Room to the stairwell nook (world tile ~55-58, 12-15), screenshot before reaching the trigger.
-- Continue walking onto the trigger footprint, screenshot during/after — confirm the ground floor fades out, the first floor (Bedroom/Study) fades in, and Mimi lands inside the first-floor stairwell nook able to move immediately.
+- Navigate, walk from spawn through the Living Room to the stairwell nook (enters around world tile x51, y10-18, through Living Room's east door), screenshot just before entering it.
+- Continue walking into the nook (the whole nook is the trigger — no separate smaller zone), screenshot during/after — confirm the ground floor fades out, the first floor (Bedroom/Study) fades in, and Mimi lands just inside Bedroom (world tile ~32,11) able to move immediately.
 - Confirm collision now blocks against first-floor walls (walk into Bedroom's wall) and ground-floor collision no longer applies (nothing to check directly, but movement should feel identical/unblocked in the newly-empty former ground-floor space is moot since she's not there).
 - Walk to the first-floor stairwell trigger and confirm she returns to the ground floor, landing back near the ground stairwell.
 - Confirm no console errors throughout.
