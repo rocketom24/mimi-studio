@@ -1435,6 +1435,12 @@ git commit -m "feat: walking onto a staircase transitions between floors"
 
 ### Task 13: Full validation pass
 
+**Post-implementation amendment:** the end-to-end walkthrough (below) found a real structural bug that no single earlier task's isolated review could see: on Level 1, `isOnStaircase` tested the WHOLE stairwell nook (`stair.tiles`) as the transition trigger, but that nook is the ONLY corridor between Bedroom and Study — both rooms' doors open into it at the same height (world y10-13) — so stepping anywhere in the nook instantly fires the transition before the player can cross to the far room. Study (and its 3 interactables) was unreachable by walking.
+
+Fix, applied as a fix round on this task since it's what surfaced the bug: `StaircaseDef` (Task 1) gains a `trigger: TileRect` field, separate from `tiles` (`tiles` stays the full walled/walkable nook footprint — Task 3's wall generation is unaffected). `isOnStaircase` (Task 6) tests `stair.trigger` instead of `stair.tiles`. Ground floor's trigger equals its full `tiles` (Living Room is its only connecting room, no through-traffic to protect — behavior unchanged). First floor's trigger is the bottom half only, `{x:35,y:14,w:7,h:4}` — both doors sit in the top half (y10-13), so a straight walk between Bedroom and Study at door-height never crosses it, only deliberately stepping down does. `game/scenes/StudioScene.ts` (Task 12) needed zero changes — it only calls `isOnStaircase(stair, ...)`, never reads `.tiles`/`.trigger` directly.
+
+Superseded code (for historical reference — the actual final shape is described above): Task 1's `StaircaseDef` interface and `STAIRCASES` array, and Task 6's `isOnStaircase` function.
+
 **Files:** none (verification only).
 
 - [ ] **Step 1: Type check, lint, build**
