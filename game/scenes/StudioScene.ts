@@ -1,13 +1,16 @@
 import * as Phaser from "phaser";
-import { CORRIDOR_FLOOR_COLOR, WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
 import { ORIENTATIONS, projectedSizeFor } from "@/game/world/projection";
 import type { ViewOrientation } from "@/game/world/projection";
-import { ROOMS } from "@/game/world/rooms";
+import { ROOMS, STAIRCASES } from "@/game/world/rooms";
+import { LEVELS } from "@/game/types/world";
+import type { Level } from "@/game/types/world";
 import { createRoomLabel } from "@/game/world/studioWorld";
-import { createCorridorFloor, createRoomFloor } from "@/game/world/floorSystem";
+import { createRoomFloor } from "@/game/world/floorSystem";
 import { createDoorDecorations, createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
 import { createFurniture } from "@/game/world/furnitureSystem";
 import { createWorldCollision } from "@/game/world/collision";
+import { createStaircaseVisual } from "@/game/world/staircase";
 import { updateWallOcclusion } from "@/game/world/occlusionSystem";
 import { CameraController, CAMERA_EVENTS, type RotateStartPayload } from "@/game/world/cameraController";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
@@ -47,8 +50,13 @@ export class StudioScene extends Phaser.Scene {
   private inputLocked = false;
   /** Shared vertical hinge (world/projected X) both layers fold toward during a rotation — captured once per rotation so it doesn't drift as the camera nudges. */
   private rotationPivotX = 0;
-  private readonly layerObjects = new Map<ViewOrientation, TrackedObject[]>();
-  private readonly wallSegmentsByOrientation = new Map<ViewOrientation, WallSegment[]>();
+  private activeLevel: Level = 0;
+  private readonly layerObjects = new Map<string, TrackedObject[]>();
+  private readonly wallSegmentsByOrientation = new Map<string, WallSegment[]>();
+
+  private layerKey(level: Level, orientation: ViewOrientation): string {
+    return `${level}:${orientation}`;
+  }
 
   constructor() {
     super("StudioScene");
@@ -59,7 +67,7 @@ export class StudioScene extends Phaser.Scene {
     this.buildOrientationLayers();
 
     this.physics.world.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
-    const collision = createWorldCollision(this);
+    const collision = createWorldCollision(this, this.activeLevel);
 
     const input = new CombinedInput([new KeyboardInput(this), this.touchInput]);
     this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, input);
@@ -99,7 +107,7 @@ export class StudioScene extends Phaser.Scene {
     const orientation = this.cameraController.getOrientation();
     this.player.update(orientation);
     updateWallOcclusion(
-      this.wallSegmentsByOrientation.get(orientation)!,
+      this.wallSegmentsByOrientation.get(this.layerKey(this.activeLevel, orientation))!,
       this.player.worldX,
       this.player.worldY,
       orientation,
@@ -139,31 +147,37 @@ export class StudioScene extends Phaser.Scene {
    * orientation's objects are visible at a time outside of a transition.
    */
   private buildOrientationLayers(): void {
-    for (const orientation of ORIENTATIONS) {
-      const objects: LayerObject[] = [];
-      objects.push(createCorridorFloor(this, CORRIDOR_FLOOR_COLOR, orientation));
-      for (const room of ROOMS) objects.push(createRoomFloor(this, room, orientation));
+    for (const level of LEVELS) {
+      for (const orientation of ORIENTATIONS) {
+        const objects: LayerObject[] = [];
+        const rooms = ROOMS.filter((r) => r.level === level);
+        const stairs = STAIRCASES.filter((s) => s.level === level);
 
-      const wallSegments = createWalls(this, orientation);
-      objects.push(...wallSegments.map((segment) => segment.graphics));
-      objects.push(createDoorDecorations(this, orientation));
-      for (const room of ROOMS) {
-        const windowGraphics = createWindows(this, room, orientation);
-        if (windowGraphics) objects.push(windowGraphics);
+        for (const room of rooms) objects.push(createRoomFloor(this, room, orientation));
+        for (const stair of stairs) objects.push(createStaircaseVisual(this, stair, orientation));
+
+        const wallSegments = createWalls(this, orientation, level);
+        objects.push(...wallSegments.map((segment) => segment.graphics));
+        objects.push(createDoorDecorations(this, orientation, level));
+        for (const room of rooms) {
+          const windowGraphics = createWindows(this, room, orientation);
+          if (windowGraphics) objects.push(windowGraphics);
+        }
+        for (const room of rooms) {
+          objects.push(...createFurniture(this, room, orientation));
+          objects.push(createRoomLabel(this, room, orientation));
+        }
+
+        const visible = level === this.activeLevel && orientation === this.cameraController.getOrientation();
+        const tracked = objects.map((obj) => {
+          obj.setVisible(visible);
+          return { obj, baseX: obj.x, baseY: obj.y, baseDepth: obj.depth };
+        });
+
+        const key = this.layerKey(level, orientation);
+        this.layerObjects.set(key, tracked);
+        this.wallSegmentsByOrientation.set(key, wallSegments);
       }
-      for (const room of ROOMS) {
-        objects.push(...createFurniture(this, room, orientation));
-        objects.push(createRoomLabel(this, room, orientation));
-      }
-
-      const visible = orientation === this.cameraController.getOrientation();
-      const tracked = objects.map((obj) => {
-        obj.setVisible(visible);
-        return { obj, baseX: obj.x, baseY: obj.y, baseDepth: obj.depth };
-      });
-
-      this.layerObjects.set(orientation, tracked);
-      this.wallSegmentsByOrientation.set(orientation, wallSegments);
     }
   }
 
@@ -182,13 +196,13 @@ export class StudioScene extends Phaser.Scene {
     const { from, to, t } = this.cameraController.getTransition();
     const fromScale = 1 - t;
     const toScale = t;
-    this.applyLayerFold(from, fromScale, fromScale >= toScale);
-    this.applyLayerFold(to, toScale, toScale > fromScale);
+    this.applyLayerFold(this.activeLevel, from, fromScale, fromScale >= toScale);
+    this.applyLayerFold(this.activeLevel, to, toScale, toScale > fromScale);
     this.player.blendVisual(from, to, t);
   }
 
-  private applyLayerFold(orientation: ViewOrientation, scaleX: number, onTop: boolean): void {
-    for (const { obj, baseX, baseY, baseDepth } of this.layerObjects.get(orientation)!) {
+  private applyLayerFold(level: Level, orientation: ViewOrientation, scaleX: number, onTop: boolean): void {
+    for (const { obj, baseX, baseY, baseDepth } of this.layerObjects.get(this.layerKey(level, orientation))!) {
       obj.setScale(scaleX, 1);
       obj.setPosition(this.rotationPivotX * (1 - scaleX) + scaleX * baseX, baseY);
       obj.setDepth(onTop ? baseDepth + FOLD_TOP_DEPTH_BIAS : baseDepth);
@@ -202,7 +216,7 @@ export class StudioScene extends Phaser.Scene {
     this.interactionPrompt.setHidden(true);
     this.events.emit(SCENE_EVENTS.CameraRotateStart);
 
-    for (const { obj } of this.layerObjects.get(to)!) obj.setVisible(true);
+    for (const { obj } of this.layerObjects.get(this.layerKey(this.activeLevel, to))!) obj.setVisible(true);
 
     const fromSize = projectedSizeFor(from);
     const toSize = projectedSizeFor(to);
@@ -212,8 +226,8 @@ export class StudioScene extends Phaser.Scene {
   }
 
   private handleRotateComplete(orientation: ViewOrientation): void {
-    for (const [layerOrientation, tracked] of this.layerObjects) {
-      const visible = layerOrientation === orientation;
+    for (const [key, tracked] of this.layerObjects) {
+      const visible = key === this.layerKey(this.activeLevel, orientation);
       for (const { obj, baseX, baseY, baseDepth } of tracked) {
         obj.setVisible(visible);
         obj.setScale(1, 1);
