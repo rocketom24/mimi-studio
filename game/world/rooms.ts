@@ -1,4 +1,4 @@
-import type { RoomDef, StaircaseDef } from "@/game/types/world";
+import type { Level, RoomDef, StaircaseDef } from "@/game/types/world";
 import { TILE_SIZE } from "@/game/config/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
@@ -124,9 +124,18 @@ export const STAIRCASES: StaircaseDef[] = [
   },
 ];
 
-/** Finds which room's tile rect contains a world-pixel point. Rooms never overlap, so this is unambiguous. Used to derive an interactable's level from its position. */
-export function roomAt(worldX: number, worldY: number): RoomDef | undefined {
+/**
+ * Finds which room ON A GIVEN LEVEL has a tile rect containing a world-pixel
+ * point. Rooms never overlap within one level, but both levels deliberately
+ * reuse the identical 0-512x0-288 coordinate space — so `level` is required,
+ * not optional: without it, a point inside both a level-0 and a level-1
+ * room's rect would resolve to whichever room happens to appear first in
+ * `ROOMS`, silently misattributing it. Used to test whether a world point
+ * (e.g. an interactable's position) belongs to a specific level.
+ */
+export function roomAt(worldX: number, worldY: number, level: Level): RoomDef | undefined {
   return ROOMS.find((room) => {
+    if (room.level !== level) return false;
     const x = px(room.tiles.x);
     const y = px(room.tiles.y);
     return worldX >= x && worldX < x + px(room.tiles.w) && worldY >= y && worldY < y + px(room.tiles.h);

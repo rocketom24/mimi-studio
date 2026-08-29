@@ -1,18 +1,20 @@
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import type { Interactable } from "@/game/types/interaction";
+import type { Level } from "@/game/types/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
 const INTERACTION_RADIUS = 14;
 
-/** World-pixel center of a tile at (localTileX, localTileY) within a room. */
-function roomPoint(roomId: string, localTileX: number, localTileY: number): { x: number; y: number } {
+/** World-pixel center of a tile at (localTileX, localTileY) within a room, plus that room's level — the only reliable source of an interactable's level (see the `level` doc comment on `Interactable`). */
+function roomPoint(roomId: string, localTileX: number, localTileY: number): { x: number; y: number; level: Level } {
   const room = ROOMS.find((r) => r.id === roomId);
   if (!room) throw new Error(`Unknown room id: ${roomId}`);
   return {
     x: px(room.tiles.x + localTileX) + TILE_SIZE / 2,
     y: px(room.tiles.y + localTileY) + TILE_SIZE / 2,
+    level: room.level,
   };
 }
 

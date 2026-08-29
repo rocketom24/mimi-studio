@@ -2,7 +2,7 @@ import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
 import { ORIENTATIONS, projectedSizeFor } from "@/game/world/projection";
 import type { ViewOrientation } from "@/game/world/projection";
-import { ROOMS, STAIRCASES, roomAt } from "@/game/world/rooms";
+import { ROOMS, STAIRCASES } from "@/game/world/rooms";
 import { LEVELS } from "@/game/types/world";
 import type { Level } from "@/game/types/world";
 import { createRoomLabel } from "@/game/world/studioWorld";
@@ -93,7 +93,7 @@ export class StudioScene extends Phaser.Scene {
     this.cameras.main.setDeadzone(48, 28);
 
     for (const level of LEVELS) {
-      const levelInteractables = INTERACTABLES.filter((i) => roomAt(i.x, i.y)?.level === level);
+      const levelInteractables = INTERACTABLES.filter((i) => i.level === level);
       const system = new InteractionSystem(this, levelInteractables);
       const prompt = new InteractionPrompt(this, system, this.player);
       system.on(INTERACTION_EVENTS.Open, this.handleInteractionOpen, this);
