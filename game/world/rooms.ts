@@ -94,21 +94,33 @@ export const ROOMS: RoomDef[] = [
   },
 ];
 
-/** Ground-floor stairwell nook: 51-59 x, 10-18 y. First-floor nook: 35-42 x, 10-18 y — between Bedroom and Study. */
+/**
+ * Ground-floor stairwell nook: 51-59 x, 10-18 y — its west wall (x-1=50)
+ * meets Living Room's east wall (2+48=50) exactly, so Living Room's east
+ * door opens straight into it. First-floor nook: 35-42 x, 10-18 y — its
+ * west wall (35-1=34) meets Bedroom's east wall (2+32=34), and its east
+ * wall (35+7=42) meets Study's west wall (43-1=42).
+ *
+ * The whole nook rect IS the transition trigger (no separate smaller
+ * "step" sub-zone) — stepping anywhere in it starts the floor change.
+ * Each `toTile` lands just inside the DESTINATION room at its doorway
+ * threshold (not inside the nook), so arrival is never inside a trigger
+ * zone and no re-trigger cooldown is needed.
+ */
 export const STAIRCASES: StaircaseDef[] = [
   {
     id: "stairs-up",
     level: 0,
-    tiles: { x: 55, y: 12, w: 3, h: 3 },
+    tiles: { x: 51, y: 10, w: 8, h: 8 },
     toLevel: 1,
-    toTile: { x: 38, y: 16 },
+    toTile: { x: 32, y: 11 },
   },
   {
     id: "stairs-down",
     level: 1,
-    tiles: { x: 38, y: 12, w: 3, h: 3 },
+    tiles: { x: 35, y: 10, w: 7, h: 8 },
     toLevel: 0,
-    toTile: { x: 55, y: 16 },
+    toTile: { x: 48, y: 15 },
   },
 ];
 
