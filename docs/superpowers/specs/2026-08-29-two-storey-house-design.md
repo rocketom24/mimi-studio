@@ -63,10 +63,7 @@ The front door (existing exterior gap in the north wall) moves to align with Ent
 `computeWallRects()` currently assumes exactly two equal-height rows of rooms plus a shared corridor (`TOP_Y`/`BOTTOM_Y`). That assumption is replaced with a per-room-edge algorithm, parameterized by `level`:
 
 1. Outer border wall around the full 512×288 rect, with the exterior door gap included only when `level === 0`.
-2. For each room on that level, walk its 4 edges. An edge is either:
-   - A **declared door** (gap) — from that room's `doors[]`.
-   - **Shared with a neighboring room** — drawn once, by convention the room with the smaller `tiles.y` (or, for east/west-adjacent rooms, smaller `tiles.x`) owns and draws that boundary; the neighbor doesn't redraw it. This avoids double walls or mismatched gaps at a shared partition.
-   - Otherwise **solid** — including edges facing dead space, per the void rule above.
+2. For each room (and each staircase nook) on that level, walk its 4 edges and cut a gap wherever any room's declared `doors[]` produces a `WallGap` at that exact world-pixel line — matched purely by position (axis + line coordinate + span overlap), not by which room declared it. A shared partition between two adjacent rooms is therefore drawn **twice** (once from each room's own edge walk) rather than once by an ownership convention — simpler to implement correctly than the ownership scheme originally sketched here, and harmless: the two coincident rects are pixel-identical, so collision is unaffected, and the only visible effect is a purely cosmetic occlusion-fade seam (the front-face fade always includes the player's own position, so she is never actually occluded by the duplicate). An edge with no matching gap at its line renders solid, including edges facing dead space, per the void rule above.
 
 `createDoorDecorations()` and `createWindows()` take the same `level` filter so their gap/window math only considers the active level's rooms.
 
