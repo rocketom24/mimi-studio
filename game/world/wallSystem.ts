@@ -96,6 +96,8 @@ export interface DoorPlacement {
   openDir: { x: number; y: number };
   /** Leaf length in world px (door.length tiles). */
   span: number;
+  /** True iff this door sits in the house's own outer north row / west column (see buildWallRuns' isBackWall) — those walls stay solid 3D blocks in isometric, so the door plugging one should too, instead of blending like a front-wall door. */
+  isBackWall: boolean;
 }
 
 /**
@@ -121,13 +123,13 @@ export function computeDoorPlacements(rooms: RoomDef[]): DoorPlacement[] {
       const along = px(door.offset);
       const span = px(door.length);
       if (door.side === "north") {
-        placements.push({ room, door, hinge: { x: px(x) + along, y: px(y) - half }, closedDir: { x: 1, y: 0 }, openDir: { x: 0, y: 1 }, span });
+        placements.push({ room, door, hinge: { x: px(x) + along, y: px(y) - half }, closedDir: { x: 1, y: 0 }, openDir: { x: 0, y: 1 }, span, isBackWall: y - 1 === 0 });
       } else if (door.side === "south") {
-        placements.push({ room, door, hinge: { x: px(x) + along, y: px(y + h) + half }, closedDir: { x: 1, y: 0 }, openDir: { x: 0, y: -1 }, span });
+        placements.push({ room, door, hinge: { x: px(x) + along, y: px(y + h) + half }, closedDir: { x: 1, y: 0 }, openDir: { x: 0, y: -1 }, span, isBackWall: y + h === 0 });
       } else if (door.side === "west") {
-        placements.push({ room, door, hinge: { x: px(x) - half, y: px(y) + along }, closedDir: { x: 0, y: 1 }, openDir: { x: 1, y: 0 }, span });
+        placements.push({ room, door, hinge: { x: px(x) - half, y: px(y) + along }, closedDir: { x: 0, y: 1 }, openDir: { x: 1, y: 0 }, span, isBackWall: x - 1 === 0 });
       } else {
-        placements.push({ room, door, hinge: { x: px(x + w) + half, y: px(y) + along }, closedDir: { x: 0, y: 1 }, openDir: { x: -1, y: 0 }, span });
+        placements.push({ room, door, hinge: { x: px(x + w) + half, y: px(y) + along }, closedDir: { x: 0, y: 1 }, openDir: { x: -1, y: 0 }, span, isBackWall: x + w === 0 });
       }
     }
   }
@@ -229,22 +231,50 @@ function thinRect(rect: PixelRect, padStart: boolean, padEnd: boolean): PixelRec
 interface WallRun {
   thin: PixelRect;
   orientation: WallOrientation;
+  /**
+   * True for the house's own outer north row / west column — the two
+   * "back" walls of the dollhouse cutaway, which stay solid in isometric
+   * mode no matter what. Every other run (south/east exterior border,
+   * every interior divider) is a "front" wall — see createWalls.
+   */
+  isBackWall: boolean;
+}
+
+function makeWallRun(grid: boolean[][], rect: PixelRect, forceBackWall?: boolean): WallRun {
+  const orientation = classifyRun(rect);
+  const tx = rect.x / TILE_SIZE;
+  const ty = rect.y / TILE_SIZE;
+  const tileLen = orientation === "horizontal" ? rect.w / TILE_SIZE : rect.h / TILE_SIZE;
+  // Only pad an end toward a tile that's actually another wall run — a
+  // door/archway gap or the world edge has nothing there to meet (see
+  // thinRect).
+  const padStart = orientation === "horizontal" ? isSolidTile(grid, tx - 1, ty) : isSolidTile(grid, tx, ty - 1);
+  const padEnd =
+    orientation === "horizontal" ? isSolidTile(grid, tx + tileLen, ty) : isSolidTile(grid, tx, ty + tileLen);
+  const isBackWall = forceBackWall ?? (orientation === "horizontal" ? ty === 0 : tx === 0);
+  return { thin: thinRect(rect, padStart, padEnd), orientation, isBackWall };
 }
 
 function buildWallRuns(grid: boolean[][], excludeRow?: number): WallRun[] {
-  return gridToRects(grid, excludeRow).map((rect) => {
-    const orientation = classifyRun(rect);
-    const tx = rect.x / TILE_SIZE;
-    const ty = rect.y / TILE_SIZE;
-    const tileLen = orientation === "horizontal" ? rect.w / TILE_SIZE : rect.h / TILE_SIZE;
-    // Only pad an end toward a tile that's actually another wall run — a
-    // door/archway gap or the world edge has nothing there to meet (see
-    // thinRect).
-    const padStart = orientation === "horizontal" ? isSolidTile(grid, tx - 1, ty) : isSolidTile(grid, tx, ty - 1);
-    const padEnd =
-      orientation === "horizontal" ? isSolidTile(grid, tx + tileLen, ty) : isSolidTile(grid, tx, ty + tileLen);
-    return { thin: thinRect(rect, padStart, padEnd), orientation };
-  });
+  const runs: WallRun[] = [];
+  for (const rect of gridToRects(grid, excludeRow)) {
+    // A row-scan run that starts at the west border but isn't the north
+    // border itself (ty !== 0) is an interior/south divider that happens to
+    // touch the back wall's own column — e.g. the Living Room/Cat Room
+    // shared wall reaching x=0. gridToRects' exclusive partition (see its
+    // doc comment) hands that corner tile to this horizontal run instead of
+    // the west column's vertical run, so left un-split it inherits the
+    // divider's front-wall (translucent shadow) styling and leaves a gap
+    // against the solid back-wall column above/below it. Carving the corner
+    // tile off as its own forced-back-wall run reunites it with that column.
+    if (classifyRun(rect) === "horizontal" && rect.x === 0 && rect.y !== 0 && rect.w > TILE_SIZE) {
+      runs.push(makeWallRun(grid, { x: 0, y: rect.y, w: TILE_SIZE, h: rect.h }, true));
+      runs.push(makeWallRun(grid, { x: TILE_SIZE, y: rect.y, w: rect.w - TILE_SIZE, h: rect.h }));
+      continue;
+    }
+    runs.push(makeWallRun(grid, rect));
+  }
+  return runs;
 }
 
 /**
@@ -397,29 +427,51 @@ function drawWallRunTopDown(g: Phaser.GameObjects.Graphics, run: WallRun): void 
 }
 
 /**
- * Renders every drawn wall run, at the same WALL_THICKNESS_PX in both camera
- * modes — isometric and top-down never show a different wall width for the
- * same physical wall. Isometric draws each run as one projected 3D block
- * (drawWallBlock); top-down draws it as a flat band with edge-aware bevels
- * (drawWallRunTopDown) so it reads as a real wall with depth rather than a
- * flat, seamed rectangle.
- *
- * The south border cutaway (computeVisibleWallRects) is an isometric-only
- * concept — it exists so the elevated dollhouse view can see inside the
- * house. Looking straight down in top-down mode, nothing needs cutting away
- * to stay readable, and hiding it there would leave the floor plan looking
- * unclosed along that edge, so top-down draws every wall (computeWallRects).
+ * Flat shadow cast for an invisible "front" wall in isometric — same
+ * footprint rect as the real wall (see createWalls's isBackWall split),
+ * flush with the floor instead of the full 3D block. Mimi still collides
+ * with the real (invisible) wall at exactly this footprint — computeWallRects
+ * doesn't know about isBackWall at all — so drawing its outline is what lets
+ * her see the boundary coming instead of walking into it blind, repeatedly.
+ */
+function drawWallShadow(g: Phaser.GameObjects.Graphics, rect: PixelRect): void {
+  const nw = project(rect.x, rect.y);
+  const ne = project(rect.x + rect.w, rect.y);
+  const se = project(rect.x + rect.w, rect.y + rect.h);
+  const sw = project(rect.x, rect.y + rect.h);
+
+  g.fillStyle(darken(WALL_COLOR, 35), FRONT_WALL_SHADOW_ALPHA);
+  g.fillPoints([nw, ne, se, sw], true);
+  g.lineStyle(1, ARCH_PALETTE.outline, 0.4);
+  g.strokePoints([nw, ne, se, sw], true);
+}
+
+/** Opacity of a "front" wall's flat shadow (see drawWallShadow) — also what a front-wall door leaf fades to at closed, so it blends into the same invisible band instead of sitting on it as an opaque block (see doorSystem's drawDoorLeaf). */
+export const FRONT_WALL_SHADOW_ALPHA = 0.45;
+
+/**
+ * Renders every wall run. Top-down draws every run as a flat band
+ * (drawWallRunTopDown) — a true floor-plan look, nothing needs hiding to
+ * stay readable there. Isometric only draws the house's back walls (north
+ * row, west column — see buildWallRuns' isBackWall) as full solid 3D blocks
+ * (drawWallBlock); every other wall (south/east exterior border, every
+ * interior divider) draws as a flat translucent shadow (drawWallShadow)
+ * instead — invisible enough to keep the elevated dollhouse view open, but
+ * still marking exactly where its (very real) collision footprint is. Doors
+ * read as openings either way — doorSystem draws their leaf independently
+ * of wall styling.
  */
 export function createWalls(scene: Phaser.Scene): WallSegment[] {
   const isTopdown = getCameraMode() === "topdown";
   const grid = buildWallGrid();
-  const runs = isTopdown ? buildWallRuns(grid) : buildWallRuns(grid, WORLD_TILE_HEIGHT - 1);
+  const runs = buildWallRuns(grid);
   const segments: WallSegment[] = [];
   for (const run of runs) {
     const rect = run.thin;
     const g = scene.add.graphics().setDepth(visualDepth(rect.y + rect.h));
     if (isTopdown) drawWallRunTopDown(g, run);
-    else drawWallBlock(g, rect);
+    else if (run.isBackWall) drawWallBlock(g, rect);
+    else drawWallShadow(g, rect);
     segments.push({ rect, graphics: g });
   }
   return segments;
@@ -436,6 +488,7 @@ const WINDOW_SILL_PX = 2;
 /** Decorative window: frame, glass, center mullion, sill ledge, subtle highlight — sized to the thin wall band. Never collides. Skipped when its wall row is cut away (front/open-side walls), so no window floats in front of nothing. Returns null when the room has none or none are visible. */
 export function createWindows(scene: Phaser.Scene, room: RoomDef): Phaser.GameObjects.Graphics | null {
   if (!room.windows?.length) return null;
+  const isTopdown = getCameraMode() === "topdown";
   const g = scene.add.graphics().setDepth(DEPTH.LABEL_BASE);
   let drewAny = false;
 
@@ -443,30 +496,8 @@ export function createWindows(scene: Phaser.Scene, room: RoomDef): Phaser.GameOb
     const wallRow = Math.round(win.y / TILE_SIZE);
     if (wallRow === WORLD_TILE_HEIGHT - 1) continue; // south border row is never drawn — its window shouldn't be either
     drewAny = true;
-
-    const bandY = win.y + WALL_THICKNESS_PAD_PX;
-    const anchor = project(win.x, bandY);
-    const h = WALL_THICKNESS_PX;
-
-    g.fillStyle(ARCH_PALETTE.windowFrame, 1);
-    g.fillRect(anchor.x, anchor.y, win.w, h);
-
-    const glassX = anchor.x + 1;
-    const glassY = anchor.y + 1;
-    const glassW = win.w - 2;
-    const glassH = Math.max(1, h - 2);
-    g.fillStyle(ARCH_PALETTE.windowGlass, 0.75);
-    g.fillRect(glassX, glassY, glassW, glassH);
-
-    g.fillStyle(lighten(ARCH_PALETTE.windowGlass, 40), 0.6);
-    g.fillRect(glassX, glassY, glassW, 1);
-
-    g.fillStyle(ARCH_PALETTE.windowFrame, 1);
-    g.fillRect(anchor.x + Math.floor(win.w / 2), anchor.y, 1, h);
-
-    // Sill: a short ledge below the frame reads as the window sitting in wall depth.
-    g.fillStyle(darken(ARCH_PALETTE.windowFrame, 15), 1);
-    g.fillRect(anchor.x - 1, anchor.y + h, win.w + 2, WINDOW_SILL_PX);
+    if (isTopdown) drawWindowTopDown(g, win);
+    else drawWindowIsometric(g, win);
   }
 
   if (!drewAny) {
@@ -474,4 +505,87 @@ export function createWindows(scene: Phaser.Scene, room: RoomDef): Phaser.GameOb
     return null;
   }
   return g;
+}
+
+/** Flat floor-plan window: a glazed gap in the wall band, seen straight down. */
+function drawWindowTopDown(g: Phaser.GameObjects.Graphics, win: PixelRect): void {
+  const bandY = win.y + WALL_THICKNESS_PAD_PX;
+  const anchor = project(win.x, bandY);
+  const h = WALL_THICKNESS_PX;
+
+  g.fillStyle(ARCH_PALETTE.windowFrame, 1);
+  g.fillRect(anchor.x, anchor.y, win.w, h);
+
+  const glassX = anchor.x + 1;
+  const glassY = anchor.y + 1;
+  const glassW = win.w - 2;
+  const glassH = Math.max(1, h - 2);
+  g.fillStyle(ARCH_PALETTE.windowGlass, 0.75);
+  g.fillRect(glassX, glassY, glassW, glassH);
+
+  g.fillStyle(lighten(ARCH_PALETTE.windowGlass, 40), 0.6);
+  g.fillRect(glassX, glassY, glassW, 1);
+
+  g.fillStyle(ARCH_PALETTE.windowFrame, 1);
+  g.fillRect(anchor.x + Math.floor(win.w / 2), anchor.y, 1, h);
+
+  // Sill: a short ledge below the frame reads as the window sitting in wall depth.
+  g.fillStyle(darken(ARCH_PALETTE.windowFrame, 15), 1);
+  g.fillRect(anchor.x - 1, anchor.y + h, win.w + 2, WINDOW_SILL_PX);
+}
+
+// How high off the floor the glazed opening starts/ends, within WALL_HEIGHT_PX —
+// leaves a header above and an apron below so it reads as a punched-out opening,
+// not a band spanning the full wall height.
+const WINDOW_Z_BOTTOM = WALL_HEIGHT_PX * 0.35;
+const WINDOW_Z_TOP = WALL_HEIGHT_PX * 0.85;
+const WINDOW_SILL_DEPTH_PX = 2; // world-space y the sill juts toward the camera, below the frame
+
+/**
+ * Isometric window: every corner is individually projected (like a wall's
+ * drawFace — see drawBox), so the glass/frame/mullion/sill sit flush on the
+ * wall's actual near face and shear with it under the fixed oblique camera,
+ * instead of a screen-space rect that ignored the projection entirely.
+ */
+function drawWindowIsometric(g: Phaser.GameObjects.Graphics, win: PixelRect): void {
+  // The wall's room-facing surface — same y drawBox picks as the near face
+  // for a horizontal wall run (see drawWallBlock's nearIdx selection).
+  const yFace = win.y + WALL_THICKNESS_PAD_PX + WALL_THICKNESS_PX;
+  const x0 = win.x;
+  const x1 = win.x + win.w;
+
+  const quad = (xa: number, xb: number, za: number, zb: number, y = yFace) => [
+    project(xa, y, za),
+    project(xb, y, za),
+    project(xb, y, zb),
+    project(xa, y, zb),
+  ];
+
+  const frame = quad(x0 - 1, x1 + 1, WINDOW_Z_BOTTOM - 1, WINDOW_Z_TOP + 1);
+  g.fillStyle(ARCH_PALETTE.windowFrame, 1);
+  g.fillPoints(frame, true);
+  g.lineStyle(1, ARCH_PALETTE.outline, 0.6);
+  g.strokePoints(frame, true);
+
+  g.fillStyle(ARCH_PALETTE.windowGlass, 0.75);
+  g.fillPoints(quad(x0, x1, WINDOW_Z_BOTTOM, WINDOW_Z_TOP), true);
+
+  // Glass highlight sliver along the top edge.
+  g.fillStyle(lighten(ARCH_PALETTE.windowGlass, 40), 0.6);
+  g.fillPoints(quad(x0, x1, WINDOW_Z_TOP - 1, WINDOW_Z_TOP), true);
+
+  // Center mullion.
+  const xm = x0 + win.w / 2;
+  const mullBottom = project(xm, yFace, WINDOW_Z_BOTTOM);
+  const mullTop = project(xm, yFace, WINDOW_Z_TOP);
+  g.lineStyle(1, ARCH_PALETTE.windowFrame, 1);
+  g.lineBetween(mullBottom.x, mullBottom.y, mullTop.x, mullTop.y);
+
+  // Sill: a short ledge below the frame, projecting slightly toward the
+  // camera so it reads as sticking out of the wall rather than painted flat.
+  g.fillStyle(darken(ARCH_PALETTE.windowFrame, 15), 1);
+  g.fillPoints(
+    quad(x0 - 1, x1 + 1, WINDOW_Z_BOTTOM - 1 - WINDOW_SILL_PX, WINDOW_Z_BOTTOM - 1, yFace + WINDOW_SILL_DEPTH_PX),
+    true,
+  );
 }

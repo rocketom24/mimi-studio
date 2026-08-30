@@ -24,7 +24,7 @@ export function createGameConfig(
     height: GAME_HEIGHT,
     pixelArt: true,
     antialias: false,
-    backgroundColor: "#1a1423",
+    backgroundColor: "#2b1a12",
     physics: {
       default: "arcade",
       arcade: {
@@ -33,7 +33,11 @@ export function createGameConfig(
       },
     },
     scale: {
-      mode: Phaser.Scale.FIT,
+      // ENVELOP (not FIT) so the canvas always covers the full viewport —
+      // FIT preserves the fixed 560:315 aspect ratio and letterboxes
+      // whichever axis doesn't match, which reads as the game "cutting off"
+      // top/bottom on any window that isn't exactly 16:9.
+      mode: Phaser.Scale.ENVELOP,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
     scene: [BootScene, StudioScene],

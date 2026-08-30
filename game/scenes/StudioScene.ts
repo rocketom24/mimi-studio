@@ -1,15 +1,13 @@
 import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
 import { GAME_HEIGHT, GAME_WIDTH, RENDER_SCALE } from "@/game/config/gameConfig";
-import { getCameraMode, projectedSize, toggleCameraMode } from "@/game/world/projection";
+import { projectedSize, toggleCameraMode } from "@/game/world/projection";
 import { ROOMS } from "@/game/world/rooms";
-import { createRoomLabel } from "@/game/world/studioWorld";
 import { createHouseFloor } from "@/game/world/floorSystem";
 import { createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
 import { createDoors, updateDoors, type DoorSegment } from "@/game/world/doorSystem";
 import { createFurniture } from "@/game/world/furnitureSystem";
 import { createWorldCollision } from "@/game/world/collision";
-import { updateWallOcclusion } from "@/game/world/occlusionSystem";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import { TouchInput } from "@/game/input/TouchInput";
@@ -84,13 +82,6 @@ export class StudioScene extends Phaser.Scene {
     if (this.inputLocked) return;
 
     this.player.update();
-    // Only the isometric camera has a "wall between camera and player"
-    // concept to fade — top-down looks straight down, so every wall stays
-    // fully visible there (buildLevel() already redraws fresh, alpha=1
-    // walls on every mode toggle).
-    if (getCameraMode() === "isometric") {
-      updateWallOcclusion(this.wallSegments, this.player.worldX, this.player.worldY);
-    }
     this.interactionSystem.update(this.player.worldX, this.player.worldY);
     this.interactionPrompt.update();
     updateDoors(this, this.doorSegments, this.player.worldX, this.player.worldY);
@@ -131,7 +122,6 @@ export class StudioScene extends Phaser.Scene {
     this.levelObjects.push(...this.doorSegments.map((segment) => segment.graphics));
     for (const room of ROOMS) {
       this.levelObjects.push(...createFurniture(this, room));
-      this.levelObjects.push(createRoomLabel(this, room));
     }
   }
 

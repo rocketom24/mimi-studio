@@ -25,7 +25,8 @@ export const PLAYER_SPAWN_TILE_Y = 18;
 export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 
-const PLAYER_SPEED = 56; // logical px/sec
+const PLAYER_SPEED = 65; // logical px/sec
+const PLAYER_SCALE = 1.15;
 
 const IDLE_BOB_TIME_SCALE = 1;
 const WALK_BOB_TIME_SCALE = 3;
@@ -119,6 +120,7 @@ export class Player {
     this.sprite = scene.physics.add.sprite(x, y, textureKey(this.state.facing));
     this.sprite.setOrigin(0.5, 1);
     this.sprite.setVisible(false);
+    this.sprite.setScale(PLAYER_SCALE);
 
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     body.setSize(BODY_WIDTH, BODY_HEIGHT);
@@ -127,6 +129,7 @@ export class Player {
 
     this.visual = scene.add.sprite(x, y, textureKey(this.state.facing));
     this.visual.setOrigin(0.5, 1);
+    this.visual.setScale(PLAYER_SCALE);
     this.visual.setDepth(visualDepth(y));
 
     this.bobTween = scene.tweens.add({
