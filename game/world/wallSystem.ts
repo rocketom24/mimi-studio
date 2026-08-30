@@ -5,10 +5,25 @@ import { ARCH_PALETTE, darken, lighten } from "@/game/world/palette";
 import { DEPTH, visualDepth } from "@/game/world/depth";
 import { getCameraMode, project } from "@/game/world/projection";
 import { mergeVerticalRuns } from "@/game/world/gridRects";
-import type { PixelRect, RoomDef } from "@/game/types/world";
+import type { DoorGap, PixelRect, RoomDef } from "@/game/types/world";
 
-/** Cosmetic-only wall thickness for drawing (collision keeps the full tile — see computeWallRects vs the visual insets in createWalls). */
-const VISUAL_WALL_THICKNESS_PX = 5;
+/**
+ * Wall cross-section thickness, in world px — both camera modes draw (and
+ * collide, see computeWallRects) at this same thin band instead of the full
+ * TILE_SIZE tile depth, so isometric and top-down never show a different
+ * wall width for the same physical wall, and walls read proportionate to
+ * the widened doorways (see rooms.ts). Also the thickness windows recess
+ * into (see createWindows).
+ */
+export const WALL_THICKNESS_PX = 6;
+
+/**
+ * Half the tile depth trimmed off each side when thinning a wall run down to
+ * WALL_THICKNESS_PX — also how far in from the raw tile grid's edge the
+ * house's own outer border sits (see clampToHouseBorder), which floorSystem
+ * reuses so floor never renders past the walls' outer face.
+ */
+export const WALL_THICKNESS_PAD_PX = (TILE_SIZE - WALL_THICKNESS_PX) / 2;
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
@@ -16,34 +31,6 @@ const px = (tiles: number) => tiles * TILE_SIZE;
 export interface WallSegment {
   rect: PixelRect;
   graphics: Phaser.GameObjects.Graphics;
-}
-
-interface WallGap {
-  /** "h" = a gap in a horizontal wall line (north/south doors), fixed at a world Y. "v" = a gap in a vertical wall line (east/west doors), fixed at a world X. */
-  axis: "h" | "v";
-  pos: number;
-  from: number;
-  to: number;
-}
-
-/** Every door gap declared by any room on this level, in world-pixel space. A shared wall between two rooms only needs ONE of them to declare the door — this list is matched purely by position, not by which room declared it, so it cuts the gap into both rooms' facing walls automatically (their footprints are laid out one tile apart in rooms.ts so both walls land on the same line). */
-function collectDoorGaps(rooms: RoomDef[]): WallGap[] {
-  const gaps: WallGap[] = [];
-  for (const room of rooms) {
-    const x = px(room.tiles.x);
-    const y = px(room.tiles.y);
-    const w = px(room.tiles.w);
-    const h = px(room.tiles.h);
-    for (const door of room.doors) {
-      const from = px(door.offset) + (door.side === "north" || door.side === "south" ? x : y);
-      const to = from + px(door.length);
-      if (door.side === "north") gaps.push({ axis: "h", pos: y - TILE_SIZE, from, to });
-      else if (door.side === "south") gaps.push({ axis: "h", pos: y + h, from, to });
-      else if (door.side === "west") gaps.push({ axis: "v", pos: x - TILE_SIZE, from, to });
-      else gaps.push({ axis: "v", pos: x + w, from, to });
-    }
-  }
-  return gaps;
 }
 
 /**
@@ -97,6 +84,56 @@ export function buildWallGrid(): boolean[][] {
   return grid;
 }
 
+/** One door's world-space placement, as a hinge point plus the two unit directions its leaf swings between — see doorSystem.ts. */
+export interface DoorPlacement {
+  room: RoomDef;
+  door: DoorGap;
+  /** Fixed jamb corner the leaf pivots around. */
+  hinge: { x: number; y: number };
+  /** Unit vector the leaf spans when closed — along the wall line, plugging the gap. */
+  closedDir: { x: number; y: number };
+  /** Unit vector the leaf swings toward when open — perpendicular, into the room that declared it. */
+  openDir: { x: number; y: number };
+  /** Leaf length in world px (door.length tiles). */
+  span: number;
+}
+
+/**
+ * Placement for every declared door, in world-pixel space — read by
+ * doorSystem.ts to draw and animate the visible leaf. Kept in lockstep with
+ * buildWallGrid's own door-gap loop above (same room.doors data, same
+ * per-side offset math) so the leaf can never drift from the actual wall
+ * opening.
+ *
+ * `hinge` sits on the wall band's own centerline, not the room-facing tile
+ * edge: the wall row/column a door cuts through draws as a WALL_THICKNESS_PX
+ * band centered in its tile (see thinRect), and that center is always
+ * exactly half a tile in from the room edge, regardless of THICKNESS_PX —
+ * landing the door leaf's swing plane flush with the wall it's plugging
+ * instead of floating TILE_SIZE/2 px out into the room.
+ */
+export function computeDoorPlacements(rooms: RoomDef[]): DoorPlacement[] {
+  const placements: DoorPlacement[] = [];
+  const half = TILE_SIZE / 2;
+  for (const room of rooms) {
+    const { x, y, w, h } = room.tiles;
+    for (const door of room.doors) {
+      const along = px(door.offset);
+      const span = px(door.length);
+      if (door.side === "north") {
+        placements.push({ room, door, hinge: { x: px(x) + along, y: px(y) - half }, closedDir: { x: 1, y: 0 }, openDir: { x: 0, y: 1 }, span });
+      } else if (door.side === "south") {
+        placements.push({ room, door, hinge: { x: px(x) + along, y: px(y + h) + half }, closedDir: { x: 1, y: 0 }, openDir: { x: 0, y: -1 }, span });
+      } else if (door.side === "west") {
+        placements.push({ room, door, hinge: { x: px(x) - half, y: px(y) + along }, closedDir: { x: 0, y: 1 }, openDir: { x: 1, y: 0 }, span });
+      } else {
+        placements.push({ room, door, hinge: { x: px(x + w) + half, y: px(y) + along }, closedDir: { x: 0, y: 1 }, openDir: { x: -1, y: 0 }, span });
+      }
+    }
+  }
+  return placements;
+}
+
 /**
  * Merges a wall-tile grid into rects: one rect per contiguous horizontal run
  * per row, then a second pass stacks consecutive same-(x, w) rows into one
@@ -104,6 +141,15 @@ export function buildWallGrid(): boolean[][] {
  * interior divider) collapses into a single rect instead of one block per
  * tile-row. `excludeRow`, if given, is skipped entirely (used to hide the
  * drawn front border while keeping it solid via the un-excluded grid).
+ *
+ * Every solid tile is assigned to exactly one rect (never two) — a
+ * T-junction tile belongs to whichever run's row-scan absorbed it. Two
+ * independent per-axis scans were tried instead (one rect per orientation
+ * per tile), but at every joint that meant two separate 3D wall blocks
+ * overlapping in isometric mode, and their edge outlines crossed into a
+ * visible seam/spike instead of one clean corner. A single exclusive
+ * partition draws exactly one block per joint; thinRect's end-pad (below) is
+ * what closes the seam between adjacent exclusive rects instead.
  */
 function gridToRects(grid: boolean[][], excludeRow?: number): PixelRect[] {
   const rowRuns: PixelRect[] = [];
@@ -123,32 +169,93 @@ function gridToRects(grid: boolean[][], excludeRow?: number): PixelRect[] {
   return mergeVerticalRuns(rowRuns.map((rect) => ({ key: "", rect }))).map((item) => item.rect);
 }
 
-/**
- * Insets a collision-authoritative wall rect down to the thin cosmetic
- * thickness used for drawing, centered within the tile band. The thickness
- * axis is whichever dimension is smaller (a horizontal wall line is wide
- * and one-tile-thick in y; a vertical line is tall and one-tile-thick in
- * x); an isolated square tile (an unmerged corner stub) shrinks both.
- */
-function insetForVisual(rect: PixelRect): PixelRect {
-  const shrinkX = rect.w <= rect.h;
-  const shrinkY = rect.h <= rect.w;
-  const x = shrinkX ? rect.x + (rect.w - VISUAL_WALL_THICKNESS_PX) / 2 : rect.x;
-  const y = shrinkY ? rect.y + (rect.h - VISUAL_WALL_THICKNESS_PX) / 2 : rect.y;
-  const w = shrinkX ? VISUAL_WALL_THICKNESS_PX : rect.w;
-  const h = shrinkY ? VISUAL_WALL_THICKNESS_PX : rect.h;
-  return { x, y, w, h };
+/** Which axis a wall run is thin across — the other axis is its (possibly multi-tile) length. */
+type WallOrientation = "horizontal" | "vertical";
+
+function classifyRun(rect: PixelRect): WallOrientation {
+  return rect.h <= rect.w ? "horizontal" : "vertical";
 }
 
 /**
- * Every wall rectangle in the house, in world-pixel space — this is the
- * collision-authoritative set (includes the south exterior border, which is
- * never drawn — see computeVisibleWallRects). Both the visual drawing and
- * the collision bodies are built from the same grid, so they can never
- * drift apart.
+ * Clips a rect to the house's own outer border — WALL_THICKNESS_PAD_PX in
+ * from the raw tile-grid edge on every side, matching where a perimeter
+ * wall's own thin band actually sits (see thinRect). A run whose raw tile
+ * extent already reaches the grid edge (e.g. the north border spans every
+ * column) has nothing to pad there, but its un-padded edge still lands
+ * exactly on the grid edge — a full WALL_THICKNESS_PAD_PX past the
+ * perpendicular wall's own inset band, so the two visibly failed to line up
+ * at the corner. Clamping to the inset border instead of the raw grid edge
+ * is what makes every exterior wall's outer face flush.
+ */
+export function clampToHouseBorder(rect: PixelRect): PixelRect {
+  const pad = WALL_THICKNESS_PAD_PX;
+  const maxX = px(WORLD_TILE_WIDTH) - pad;
+  const maxY = px(WORLD_TILE_HEIGHT) - pad;
+  const x0 = Math.max(pad, rect.x);
+  const y0 = Math.max(pad, rect.y);
+  const x1 = Math.min(maxX, rect.x + rect.w);
+  const y1 = Math.min(maxY, rect.y + rect.h);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * Shrinks one full-tile-thick run rect down to WALL_THICKNESS_PX, centered
+ * on its thin axis, and extends its long axis by the trimmed-off pad on
+ * whichever end(s) `padStart`/`padEnd` say actually meet another wall run.
+ * That extension isn't cosmetic slack — when a run's end tile is where a
+ * perpendicular run meets it (a corner or T-junction), the neighbor's own
+ * thin band starts exactly one tile-pad short of the shared tile edge, and
+ * padding this run out to meet it is what makes two thin bands actually
+ * touch at the joint instead of leaving a gap (see gridToRects'
+ * corner-tile-only-owned-by-one-run construction). An end with no such
+ * neighbor — a door/archway gap, or open floor — gets no pad: nothing is
+ * there to close a seam against, and padding anyway would just bite into
+ * the open gap next to it. clampToHouseBorder then keeps whatever's left at
+ * the house's own outer edge instead of the raw tile grid's.
+ */
+function thinRect(rect: PixelRect, padStart: boolean, padEnd: boolean): PixelRect {
+  const pad = WALL_THICKNESS_PAD_PX;
+  if (classifyRun(rect) === "horizontal") {
+    const x = rect.x - (padStart ? pad : 0);
+    const w = rect.w + (padStart ? pad : 0) + (padEnd ? pad : 0);
+    return clampToHouseBorder({ x, y: rect.y + pad, w, h: WALL_THICKNESS_PX });
+  }
+  const y = rect.y - (padStart ? pad : 0);
+  const h = rect.h + (padStart ? pad : 0) + (padEnd ? pad : 0);
+  return clampToHouseBorder({ x: rect.x + pad, y, w: WALL_THICKNESS_PX, h });
+}
+
+/** One thinned wall run. */
+interface WallRun {
+  thin: PixelRect;
+  orientation: WallOrientation;
+}
+
+function buildWallRuns(grid: boolean[][], excludeRow?: number): WallRun[] {
+  return gridToRects(grid, excludeRow).map((rect) => {
+    const orientation = classifyRun(rect);
+    const tx = rect.x / TILE_SIZE;
+    const ty = rect.y / TILE_SIZE;
+    const tileLen = orientation === "horizontal" ? rect.w / TILE_SIZE : rect.h / TILE_SIZE;
+    // Only pad an end toward a tile that's actually another wall run — a
+    // door/archway gap or the world edge has nothing there to meet (see
+    // thinRect).
+    const padStart = orientation === "horizontal" ? isSolidTile(grid, tx - 1, ty) : isSolidTile(grid, tx, ty - 1);
+    const padEnd =
+      orientation === "horizontal" ? isSolidTile(grid, tx + tileLen, ty) : isSolidTile(grid, tx, ty + tileLen);
+    return { thin: thinRect(rect, padStart, padEnd), orientation };
+  });
+}
+
+/**
+ * Every wall rectangle in the house, in world-pixel space, thinned to
+ * WALL_THICKNESS_PX — this is the collision-authoritative set (includes the
+ * south exterior border, which is never drawn — see computeVisibleWallRects).
+ * Both the visual drawing and the collision bodies are built from the same
+ * grid (and the same thinning), so they can never drift apart.
  */
 export function computeWallRects(): PixelRect[] {
-  return gridToRects(buildWallGrid());
+  return buildWallRuns(buildWallGrid()).map((run) => run.thin);
 }
 
 /**
@@ -158,85 +265,144 @@ export function computeWallRects(): PixelRect[] {
  * Interior walls and the north/west/east exterior borders draw normally.
  */
 export function computeVisibleWallRects(): PixelRect[] {
-  return gridToRects(buildWallGrid(), WORLD_TILE_HEIGHT - 1);
+  return buildWallRuns(buildWallGrid(), WORLD_TILE_HEIGHT - 1).map((run) => run.thin);
+}
+
+/** A box's flat (z=0) footprint corners, in world-pixel space, walked in perimeter order (each entry adjacent to its neighbors) — see drawBox. */
+export type BoxFootprint = readonly [WorldPoint, WorldPoint, WorldPoint, WorldPoint];
+interface WorldPoint {
+  x: number;
+  y: number;
 }
 
 /**
- * Draws one world-space wall rect as a short 3D block: a footprint plate at
- * floor level, one tall face extruded along the wall's long axis, and a top
- * cap. All corners are individually projected so the block reads as a
- * slanted box under the fixed oblique camera.
+ * Draws one world-space quad footprint as a short 3D block, at WALL_HEIGHT_PX
+ * tall: a footprint plate at floor level, its two camera-facing side faces
+ * extruded up, and a top cap. All corners are individually projected so the
+ * block reads as a slanted box under the fixed oblique camera.
  *
- * At the thin cosmetic wall thickness (see VISUAL_WALL_THICKNESS_PX) a rect
- * is long along one axis and a sliver along the other — a "horizontal" wall
- * line (w >= h) runs east-west on screen and its length shows on the south
- * edge; a "vertical" one (h > w) runs screen-diagonal (world Y is the long
- * axis under this projection) and its length shows on the east edge
- * instead. Only that one long face is drawn — extruding the short axis too
- * would just be a few-pixel sliver that reads as a stray diagonal streak,
- * not a depth cue.
+ * The footprint doesn't have to be an axis-aligned rect — doorSystem.ts
+ * reuses this for its (possibly rotated) door-leaf slab. Which two of the
+ * quad's four edges are "camera-facing" isn't fixed to two hardcoded
+ * corners: under this projection, larger (worldX + worldY) always projects
+ * nearer the viewer (see projection.ts), so whichever corner maximizes that
+ * sum is the box's nearest corner, and its two adjacent edges are the two
+ * faces actually visible from the fixed camera. For an axis-aligned wall
+ * rect that's always the south+east corner/edges (matching the old
+ * hardcoded behavior); for a door leaf, which corner is nearest keeps
+ * changing as it swings, so a fixed edge choice was drawing the FAR face on
+ * roughly half of all doors/angles, leaving the near face — the one
+ * actually facing the camera — blank.
+ *
+ * Both adjacent faces are drawn, not just whichever edge is longer: a real
+ * box has two visible sides here, and skipping one left the short end of
+ * every wall run looking like a folded flat card instead of a solid block.
+ * The two faces share the near corner's top/base edge, so together they
+ * read as one continuous corner.
+ *
+ * In top-down mode project() ignores z entirely, so every top point here
+ * collapses onto its z=0 counterpart and both face quads degenerate to zero
+ * area for free — only the flat footprint plate and its outline end up
+ * visible, giving top-down its floor-plan look with no extra branching here.
+ * (The faces' mid-height highlight band is computed via a real project(...,
+ * WALL_HEIGHT_PX / 2) call rather than a screen-space offset for exactly
+ * this reason — a fixed-pixel screen offset doesn't know to collapse to
+ * zero in top-down, and used to leave a stray WALL_HEIGHT_PX/2-tall smear
+ * hanging off every door there.)
  */
-function drawWallBlock(g: Phaser.GameObjects.Graphics, fullRect: PixelRect, rect: PixelRect): void {
-  const faceTop = lighten(WALL_COLOR, 10);
-  const faceBottom = darken(WALL_COLOR, 12);
+export function drawBox(g: Phaser.GameObjects.Graphics, corners: BoxFootprint, baseColor: number): void {
+  const faceTop = lighten(baseColor, 10);
+  const faceBottom = darken(baseColor, 12);
   const highlight = ARCH_PALETTE.wallHighlight;
-  const capShade = darken(WALL_COLOR, 4);
+  const capShade = darken(baseColor, 4);
 
+  const base = corners.map((p) => project(p.x, p.y));
+  const top = corners.map((p) => project(p.x, p.y, WALL_HEIGHT_PX));
+
+  // Footprint plate — keeps the floor from ever showing through at the base.
+  g.fillStyle(baseColor, 1);
+  g.fillPoints(base, true);
+
+  let nearIdx = 0;
+  for (let i = 1; i < 4; i++) {
+    if (corners[i].x + corners[i].y > corners[nearIdx].x + corners[nearIdx].y) nearIdx = i;
+  }
+  const prevIdx = (nearIdx + 3) % 4;
+  const nextIdx = (nearIdx + 1) % 4;
+
+  // One face, given its two corner indices (the shared "near" one, and its neighbor).
+  const drawFace = (aIdx: number, bIdx: number) => {
+    const baseA = base[aIdx];
+    const baseB = base[bIdx];
+    const topA = top[aIdx];
+    const topB = top[bIdx];
+    g.fillStyle(faceBottom, 1);
+    g.fillPoints([baseA, baseB, topB, topA], true);
+    const midA = project(corners[aIdx].x, corners[aIdx].y, WALL_HEIGHT_PX / 2);
+    const midB = project(corners[bIdx].x, corners[bIdx].y, WALL_HEIGHT_PX / 2);
+    g.fillStyle(faceTop, 0.9);
+    g.fillPoints([topA, topB, midB, midA], true);
+    g.lineStyle(1, ARCH_PALETTE.outline, 0.6);
+    g.lineBetween(topA.x, topA.y, baseA.x, baseA.y);
+    g.lineBetween(topB.x, topB.y, baseB.x, baseB.y);
+  };
+
+  // The near corner's two edges — they share its top/base point.
+  drawFace(prevIdx, nearIdx);
+  drawFace(nextIdx, nearIdx);
+
+  // Top cap.
+  g.fillStyle(capShade, 1);
+  g.fillPoints(top, true);
+  g.lineStyle(1, highlight, 0.9);
+  g.lineBetween(top[0].x, top[0].y, top[1].x, top[1].y);
+
+  // Dark charcoal outline around the whole block, per the reference palette.
+  g.lineStyle(1, ARCH_PALETTE.outline, 0.6);
+  g.strokePoints(top, true);
+}
+
+/** Wall-specific wrapper: a rect's own corners as a BoxFootprint, drawn in WALL_COLOR (see drawBox). */
+function drawWallBlock(g: Phaser.GameObjects.Graphics, rect: PixelRect): void {
+  drawBox(
+    g,
+    [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y + rect.h },
+      { x: rect.x, y: rect.y + rect.h },
+    ],
+    WALL_COLOR,
+  );
+}
+
+function isSolidTile(grid: boolean[][], tx: number, ty: number): boolean {
+  return ty >= 0 && ty < grid.length && tx >= 0 && tx < grid[ty].length && grid[ty][tx];
+}
+
+/**
+ * Top-down wall rendering: flat fill of the thinned run rect (see
+ * buildWallRuns), no bevel/shadow — a true floor-plan look, straight down
+ * with no directional lighting cues.
+ */
+function drawWallRunTopDown(g: Phaser.GameObjects.Graphics, run: WallRun): void {
+  const rect = run.thin;
   const nw = project(rect.x, rect.y);
   const ne = project(rect.x + rect.w, rect.y);
   const se = project(rect.x + rect.w, rect.y + rect.h);
   const sw = project(rect.x, rect.y + rect.h);
 
-  // Footprint plate at the full (collision-authoritative) tile bounds, not the
-  // thin cosmetic inset — every wall tile is drawn from the same boolean grid
-  // floorSystem excludes and collision.ts collides against, so adjacent wall
-  // rects always share exact tile edges (no gap to the floor, no seam at
-  // corners/intersections) regardless of the thin face's own inset.
-  const fnw = project(fullRect.x, fullRect.y);
-  const fne = project(fullRect.x + fullRect.w, fullRect.y);
-  const fse = project(fullRect.x + fullRect.w, fullRect.y + fullRect.h);
-  const fsw = project(fullRect.x, fullRect.y + fullRect.h);
   g.fillStyle(WALL_COLOR, 1);
-  g.fillPoints([fnw, fne, fse, fsw], true);
-
-  // Long face: south edge for a horizontal wall line, east edge for a vertical one — both share the se corner.
-  const isVertical = rect.h > rect.w;
-  const faceBase = isVertical ? ne : sw;
-  const faceBaseTop = isVertical
-    ? project(rect.x + rect.w, rect.y, WALL_HEIGHT_PX)
-    : project(rect.x, rect.y + rect.h, WALL_HEIGHT_PX);
-  const seTop = project(rect.x + rect.w, rect.y + rect.h, WALL_HEIGHT_PX);
-  g.fillStyle(faceBottom, 1);
-  g.fillPoints([faceBase, se, seTop, faceBaseTop], true);
-  const midBase = { x: faceBaseTop.x, y: faceBaseTop.y + Math.ceil(WALL_HEIGHT_PX / 2) };
-  const midSe = { x: seTop.x, y: seTop.y + Math.ceil(WALL_HEIGHT_PX / 2) };
-  g.fillStyle(faceTop, 0.9);
-  g.fillPoints([faceBaseTop, seTop, midSe, midBase], true);
-
-  // Top cap.
-  const nwTop = project(rect.x, rect.y, WALL_HEIGHT_PX);
-  const neTop = project(rect.x + rect.w, rect.y, WALL_HEIGHT_PX);
-  const swTop = project(rect.x, rect.y + rect.h, WALL_HEIGHT_PX);
-  g.fillStyle(capShade, 1);
-  g.fillPoints([nwTop, neTop, seTop, swTop], true);
-  g.lineStyle(1, highlight, 0.9);
-  g.lineBetween(nwTop.x, nwTop.y, neTop.x, neTop.y);
-
-  // Dark charcoal outline around the whole block, per the reference palette.
-  g.lineStyle(1, ARCH_PALETTE.outline, 0.6);
-  g.strokePoints([nwTop, neTop, seTop, swTop], true);
-  g.lineBetween(faceBaseTop.x, faceBaseTop.y, faceBase.x, faceBase.y);
-  g.lineBetween(seTop.x, seTop.y, se.x, se.y);
+  g.fillPoints([nw, ne, se, sw], true);
 }
 
 /**
- * Renders every drawn wall rect as a thin projected 3D block — visual
- * thickness only (see insetForVisual); collision keeps the full tile via
- * computeWallRects(), so Mimi can't clip through a corner even though the
- * drawn wall reads as an architectural line rather than a solid column.
- * Returns each segment with its full-tile rect (not the thin visual one) so
- * occlusionSystem's span/depth checks still match the actual doorway/corner
- * geometry.
+ * Renders every drawn wall run, at the same WALL_THICKNESS_PX in both camera
+ * modes — isometric and top-down never show a different wall width for the
+ * same physical wall. Isometric draws each run as one projected 3D block
+ * (drawWallBlock); top-down draws it as a flat band with edge-aware bevels
+ * (drawWallRunTopDown) so it reads as a real wall with depth rather than a
+ * flat, seamed rectangle.
  *
  * The south border cutaway (computeVisibleWallRects) is an isometric-only
  * concept — it exists so the elevated dollhouse view can see inside the
@@ -245,53 +411,18 @@ function drawWallBlock(g: Phaser.GameObjects.Graphics, fullRect: PixelRect, rect
  * unclosed along that edge, so top-down draws every wall (computeWallRects).
  */
 export function createWalls(scene: Phaser.Scene): WallSegment[] {
-  const rects = getCameraMode() === "topdown" ? computeWallRects() : computeVisibleWallRects();
+  const isTopdown = getCameraMode() === "topdown";
+  const grid = buildWallGrid();
+  const runs = isTopdown ? buildWallRuns(grid) : buildWallRuns(grid, WORLD_TILE_HEIGHT - 1);
   const segments: WallSegment[] = [];
-  for (const rect of rects) {
+  for (const run of runs) {
+    const rect = run.thin;
     const g = scene.add.graphics().setDepth(visualDepth(rect.y + rect.h));
-    drawWallBlock(g, rect, insetForVisual(rect));
+    if (isTopdown) drawWallRunTopDown(g, run);
+    else drawWallBlock(g, rect);
     segments.push({ rect, graphics: g });
   }
   return segments;
-}
-
-/**
- * Soft threshold shading at every doorway, projected onto the floor plane
- * exactly like a floor tile (see floorSystem's floorQuad). Doesn't touch the
- * gap geometry itself.
- *
- * The previous version drew corner "posts" and a threshold line with raw
- * `fillRect(screenAnchor, ...worldSizedExtent)` — passing an unprojected
- * world-pixel size straight in as a screen-pixel size. Under the isometric
- * shear those extents don't match screen space at all, so a "v"-axis gap
- * (whose world-space length runs along the diagonal Y axis on screen, not
- * straight down) rendered as a stray vertical bar many tiles tall: the
- * "brown debug lines" cutting across the floor. Every point drawn here goes
- * through project(), so it's correct in both camera modes and can never
- * drift from the wall/collision geometry that defines the gap.
- */
-export function createDoorDecorations(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
-  const g = scene.add.graphics().setDepth(DEPTH.LABEL_BASE);
-
-  for (const gap of collectDoorGaps(ROOMS)) {
-    const rect: PixelRect =
-      gap.axis === "h"
-        ? { x: gap.from, y: gap.pos, w: gap.to - gap.from, h: TILE_SIZE }
-        : { x: gap.pos, y: gap.from, w: TILE_SIZE, h: gap.to - gap.from };
-
-    g.fillStyle(0x000000, 0.18);
-    g.fillPoints(
-      [
-        project(rect.x, rect.y),
-        project(rect.x + rect.w, rect.y),
-        project(rect.x + rect.w, rect.y + rect.h),
-        project(rect.x, rect.y + rect.h),
-      ],
-      true,
-    );
-  }
-
-  return g;
 }
 
 /**
@@ -313,9 +444,9 @@ export function createWindows(scene: Phaser.Scene, room: RoomDef): Phaser.GameOb
     if (wallRow === WORLD_TILE_HEIGHT - 1) continue; // south border row is never drawn — its window shouldn't be either
     drewAny = true;
 
-    const bandY = win.y + (TILE_SIZE - VISUAL_WALL_THICKNESS_PX) / 2;
+    const bandY = win.y + WALL_THICKNESS_PAD_PX;
     const anchor = project(win.x, bandY);
-    const h = VISUAL_WALL_THICKNESS_PX;
+    const h = WALL_THICKNESS_PX;
 
     g.fillStyle(ARCH_PALETTE.windowFrame, 1);
     g.fillRect(anchor.x, anchor.y, win.w, h);

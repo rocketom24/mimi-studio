@@ -8,18 +8,19 @@ const px = (tiles: number) => tiles * TILE_SIZE;
  * single camera angle (no rotation). Left column: Living Room over Cat
  * Room + Entrance. Right column: Bedroom + Study spans the full height —
  * former Kitchen/Bedroom-Study split is now one continuous room (kitchen
- * furniture deferred). Front (south) wall open.
+ * furniture deferred).
  *
  * Adjacent rooms keep exactly one empty tile of gap between their
  * footprints so both rooms' walls land on the same tile — one declared
  * door then cuts both sides at once.
  *
- * Every bottom-band room's south edge coincides with the world's south
- * border row (open-front cutaway, see wallSystem.computeVisibleWallRects).
- * That coincidence alone only hides the border strip *outside* any room's
- * footprint — each room's own south wall is still drawn unless it declares
- * a door there too, so every bottom room gets a near-full-width south door
- * to actually read as open, matching the reference.
+ * The 3 real doors (Living Room <-> Cat Room, Living Room <-> Bedroom +
+ * Study, Entrance's exterior front door) are each 2 tiles — comfortably
+ * wider than Mimi's body, see entities/Player.ts — and get a real animated
+ * leaf drawn by doorSystem.ts
+ * (computeDoorPlacements reads this same array, so the visual leaf can
+ * never drift from the wall gap it's covering). Living Room's wide south
+ * connection to Entrance stays an open archway, not a door.
  */
 export const ROOMS: RoomDef[] = [
   {
@@ -29,9 +30,9 @@ export const ROOMS: RoomDef[] = [
     floorColor: 0xa9784f,
     floorType: "wood",
     doors: [
-      { side: "east", offset: 2, length: 5 }, // -> Bedroom + Study
-      { side: "south", offset: 1, length: 4 }, // -> Cat Room
-      { side: "south", offset: 7, length: 5 }, // -> Entrance
+      { side: "east", offset: 5, length: 2 }, // -> Bedroom + Study, the only door between them (Entrance has none)
+      { side: "south", offset: 2, length: 2 }, // -> Cat Room
+      { side: "south", offset: 7, length: 6 }, // -> Entrance, open archway (not a door)
     ],
     windows: [{ x: px(6), y: px(0), w: px(4), h: TILE_SIZE - 2 }],
     furniture: [],
@@ -42,7 +43,7 @@ export const ROOMS: RoomDef[] = [
     tiles: { x: 1, y: 14, w: 6, h: 6 },
     floorColor: 0xa9784f,
     floorType: "wood",
-    doors: [{ side: "south", offset: 1, length: 4 }], // open front
+    doors: [],
     furniture: [],
   },
   {
@@ -51,10 +52,11 @@ export const ROOMS: RoomDef[] = [
     tiles: { x: 8, y: 14, w: 6, h: 6 },
     floorColor: 0xa9784f,
     floorType: "wood",
-    doors: [
-      { side: "east", offset: 1, length: 4 }, // -> Bedroom-Study
-      { side: "south", offset: 1, length: 4 }, // open front
-    ],
+    // South door sits on the world's exterior border row (see
+    // config/world.ts WORLD_TILE_HEIGHT) — the main front entrance. offset
+    // 2 centers a 2-tile door in Entrance's 6-tile width (world tiles
+    // 10-11), straddling the player spawn column.
+    doors: [{ side: "south", offset: 2, length: 2 }],
     furniture: [],
   },
   {
@@ -67,7 +69,7 @@ export const ROOMS: RoomDef[] = [
     tiles: { x: 15, y: 1, w: 8, h: 19 },
     floorColor: 0xb9895e,
     floorType: "wood",
-    doors: [{ side: "south", offset: 1, length: 6 }], // open front
+    doors: [],
     windows: [{ x: px(17), y: px(0), w: px(3), h: TILE_SIZE - 2 }],
     furniture: [],
   },

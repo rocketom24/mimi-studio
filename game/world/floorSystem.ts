@@ -4,8 +4,8 @@ import { darken, lighten } from "@/game/world/palette";
 import { DEPTH } from "@/game/world/depth";
 import { project } from "@/game/world/projection";
 import { ROOMS } from "@/game/world/rooms";
-import { buildWallGrid } from "@/game/world/wallSystem";
 import { mergeVerticalRuns } from "@/game/world/gridRects";
+import { clampToHouseBorder } from "@/game/world/wallSystem";
 import type { PixelRect, RoomDef } from "@/game/types/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
@@ -56,38 +56,22 @@ function drawWorkshopPattern(g: Phaser.GameObjects.Graphics, x: number, y: numbe
   }
 }
 
-/** Tile-space bounding box spanning every room's footprint — the house's overall walkable envelope. */
-function computeHouseBounds() {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const room of ROOMS) {
-    minX = Math.min(minX, room.tiles.x);
-    minY = Math.min(minY, room.tiles.y);
-    maxX = Math.max(maxX, room.tiles.x + room.tiles.w);
-    maxY = Math.max(maxY, room.tiles.y + room.tiles.h);
-  }
-  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-}
-
 /**
- * Assigns every walkable tile to a room index, so the floor can be drawn
- * from the same unified footprint the walls already use instead of one quad
- * per declared room rect. A tile is walkable if it sits inside the house's
- * bounding envelope and isn't a wall tile (buildWallGrid — the same grid
- * collision and wall drawing use, so a tile can never be "floor" and "wall"
- * at once). Tiles inside a room's own declared rect get that room directly;
- * any leftover walkable tile — a 1-tile gap between two rooms, punched open
- * by a door — has no room of its own, so it's assigned via flood fill from
- * its nearest owned neighbor. That's what makes every doorway and corridor
- * get real floor instead of the bare background showing through.
+ * Assigns every in-grid tile — including wall and door tiles — to a room
+ * index, so the floor can be drawn as one continuous surface instead of one
+ * quad per declared room rect. Walls are drawn as a thin band centered in
+ * their tile (see WALL_THICKNESS_PX in wallSystem.ts), not the full tile, so
+ * excluding wall tiles from the floor left the un-covered pad on either side
+ * of every wall/door showing bare background instead of floor; walls always
+ * draw above the floor layer (DEPTH.FLOOR < DYNAMIC_BASE), so floor under a
+ * wall's own footprint is simply hidden, not wasted. Tiles inside a room's
+ * own declared rect get that room directly; every other tile — walls,
+ * doorway gaps, corridors — has no room of its own, so it's assigned via
+ * flood fill from its nearest owned neighbor.
  */
 function assignFloorOwners(): number[][] {
-  const bounds = computeHouseBounds();
-  const wallGrid = buildWallGrid();
   const isWalkable = (tx: number, ty: number) =>
-    tx >= bounds.x && tx < bounds.x + bounds.w && ty >= bounds.y && ty < bounds.y + bounds.h && !wallGrid[ty][tx];
+    tx >= 0 && tx < WORLD_TILE_WIDTH && ty >= 0 && ty < WORLD_TILE_HEIGHT;
 
   const owner: number[][] = Array.from({ length: WORLD_TILE_HEIGHT }, () => Array(WORLD_TILE_WIDTH).fill(-1));
   const queue: Array<[number, number]> = [];
@@ -162,12 +146,23 @@ function drawFloorRect(g: Phaser.GameObjects.Graphics, rect: PixelRect, room: Ro
  * one-quad-per-room approach that left the 1-tile gaps between rooms
  * (including every doorway) undrawn. Also draws each room's own soft
  * contact shadow under its north (back) wall.
+ *
+ * assignFloorOwners floods across the raw tile grid, including the
+ * perimeter wall ring itself (intentionally, so floor still shows through
+ * under an interior wall's own thin band — see its own doc comment). At the
+ * house's outer edge there's no wall on the far side of that ring to hide
+ * the rest of the tile, so each merged rect is clamped to the same
+ * WALL_THICKNESS_PAD_PX-inset border the walls themselves draw flush
+ * against (see wallSystem's clampToHouseBorder) — otherwise the outer ring
+ * tile's far half rendered as floor visibly outside the walls.
  */
 export function createHouseFloor(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
   const g = scene.add.graphics().setDepth(DEPTH.FLOOR);
 
   for (const { roomIndex, rect } of ownerGridToRects(assignFloorOwners())) {
-    drawFloorRect(g, rect, ROOMS[roomIndex]);
+    const clipped = clampToHouseBorder(rect);
+    if (clipped.w <= 0 || clipped.h <= 0) continue;
+    drawFloorRect(g, clipped, ROOMS[roomIndex]);
   }
 
   for (const room of ROOMS) {

@@ -1,11 +1,12 @@
 import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
-import { RENDER_SCALE } from "@/game/config/gameConfig";
+import { GAME_HEIGHT, GAME_WIDTH, RENDER_SCALE } from "@/game/config/gameConfig";
 import { getCameraMode, projectedSize, toggleCameraMode } from "@/game/world/projection";
 import { ROOMS } from "@/game/world/rooms";
 import { createRoomLabel } from "@/game/world/studioWorld";
 import { createHouseFloor } from "@/game/world/floorSystem";
-import { createDoorDecorations, createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
+import { createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
+import { createDoors, updateDoors, type DoorSegment } from "@/game/world/doorSystem";
 import { createFurniture } from "@/game/world/furnitureSystem";
 import { createWorldCollision } from "@/game/world/collision";
 import { updateWallOcclusion } from "@/game/world/occlusionSystem";
@@ -19,7 +20,12 @@ import { INTERACTABLES } from "@/game/data/interactables";
 import { GAME_EVENTS, SCENE_EVENTS } from "@/game/types/interaction";
 import type { Interactable } from "@/game/types/interaction";
 
-const ZOOM_MIN = 0.5;
+// House projects to ~504x284 world-units (see projectedSize()) inside a
+// 560x315 canvas — camera bounds already equal the house exactly (no slack),
+// so zooming out just reveals background void beyond the house, it never
+// reveals more world. 0.89 is the lowest factor that still fills ~80% of
+// the canvas with the house (0.5 used to shrink it to ~45%, mostly void).
+const ZOOM_MIN = 0.89;
 const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.1;
 
@@ -31,6 +37,7 @@ export class StudioScene extends Phaser.Scene {
   private interactionPrompt!: InteractionPrompt;
   private inputLocked = false;
   private wallSegments: WallSegment[] = [];
+  private doorSegments: DoorSegment[] = [];
   /** Every static level Graphics/Text object, so a camera-mode toggle can destroy and redraw them under the new projection instead of leaking the old ones. */
   private levelObjects: Phaser.GameObjects.GameObject[] = [];
   private zoomFactor = 1;
@@ -41,6 +48,7 @@ export class StudioScene extends Phaser.Scene {
 
   create(): void {
     this.buildLevel();
+    (window as unknown as { __scene?: Phaser.Scene }).__scene = this;
 
     this.physics.world.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
 
@@ -85,6 +93,7 @@ export class StudioScene extends Phaser.Scene {
     }
     this.interactionSystem.update(this.player.worldX, this.player.worldY);
     this.interactionPrompt.update();
+    updateDoors(this, this.doorSegments, this.player.worldX, this.player.worldY);
   }
 
   /** Called by React when a portfolio panel is closed via its own close button (not ESC). */
@@ -106,6 +115,7 @@ export class StudioScene extends Phaser.Scene {
    * calls read from (ROOMS, buildWallGrid) is identical either way.
    */
   private buildLevel(): void {
+    for (const segment of this.doorSegments) segment.tween?.stop();
     for (const obj of this.levelObjects) obj.destroy();
     this.levelObjects = [];
 
@@ -113,11 +123,12 @@ export class StudioScene extends Phaser.Scene {
 
     this.wallSegments = createWalls(this);
     this.levelObjects.push(...this.wallSegments.map((segment) => segment.graphics));
-    this.levelObjects.push(createDoorDecorations(this));
     for (const room of ROOMS) {
       const windows = createWindows(this, room);
       if (windows) this.levelObjects.push(windows);
     }
+    this.doorSegments = createDoors(this);
+    this.levelObjects.push(...this.doorSegments.map((segment) => segment.graphics));
     for (const room of ROOMS) {
       this.levelObjects.push(...createFurniture(this, room));
       this.levelObjects.push(createRoomLabel(this, room));
@@ -134,9 +145,27 @@ export class StudioScene extends Phaser.Scene {
 
   /** Recomputes camera bounds from the active projection's extent and reapplies zoom, so toggling mode or zooming never crops the house. */
   private applyCameraFraming(): void {
-    const size = projectedSize();
-    this.cameras.main.setBounds(0, 0, size.width, size.height);
+    const bounds = this.computeCameraBounds();
+    this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
     this.cameras.main.setZoom(RENDER_SCALE * this.zoomFactor);
+  }
+
+  /**
+   * Phaser pins camera scroll to the bounds' top-left corner whenever the
+   * viewport is larger than the bounds (min zoom, house smaller than the
+   * screen) — it never centers a too-small world on its own. Padding the
+   * bounds out symmetrically to at least viewport size, centered on the
+   * house, makes that same clamp land the house in the middle instead.
+   * When the viewport is smaller than the house (zoomed in), this collapses
+   * back to the house's exact extent so normal follow-cam panning is unaffected.
+   */
+  private computeCameraBounds(): { x: number; y: number; width: number; height: number } {
+    const size = projectedSize();
+    const viewWidth = GAME_WIDTH / (RENDER_SCALE * this.zoomFactor);
+    const viewHeight = GAME_HEIGHT / (RENDER_SCALE * this.zoomFactor);
+    const width = Math.max(size.width, viewWidth);
+    const height = Math.max(size.height, viewHeight);
+    return { x: (size.width - width) / 2, y: (size.height - height) / 2, width, height };
   }
 
   private handleZoomKey(event: KeyboardEvent): void {
@@ -150,7 +179,16 @@ export class StudioScene extends Phaser.Scene {
 
   private adjustZoom(delta: number): void {
     this.zoomFactor = Phaser.Math.Clamp(this.zoomFactor + delta, ZOOM_MIN, ZOOM_MAX);
+    const bounds = this.computeCameraBounds();
+    this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
     this.cameras.main.setZoom(RENDER_SCALE * this.zoomFactor);
+    (window as unknown as { __CAM_DEBUG__?: unknown }).__CAM_DEBUG__ = {
+      zoomFactor: this.zoomFactor,
+      cameraZoom: this.cameras.main.zoom,
+      scrollX: this.cameras.main.scrollX,
+      scrollY: this.cameras.main.scrollY,
+      worldView: { ...this.cameras.main.worldView },
+    };
   }
 
   private handleInteractionOpen(interactable: Interactable): void {

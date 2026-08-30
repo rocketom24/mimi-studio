@@ -6,15 +6,18 @@ import type { Facing, PlayerState } from "@/game/types/player";
 import { visualDepth } from "@/game/world/depth";
 import { project, screenToWorldDelta } from "@/game/world/projection";
 
-export const PLAYER_WIDTH = 10;
-export const PLAYER_HEIGHT = 16;
+// Sized so WALL_HEIGHT_PX (40, see config/world.ts) reads as a realistic
+// ~2.1x her height for door proportions (wallSystem/doorSystem door leaves
+// span the full wall height, no separate header geometry needed).
+export const PLAYER_WIDTH = 12;
+export const PLAYER_HEIGHT = 19;
 
 // Compact body over her lower body/legs, excluding hair and head so those
-// never snag on walls. Texture-local: shirt+legs span x[2,8) y[8,16).
-const BODY_WIDTH = 6;
-const BODY_HEIGHT = 8;
+// never snag on walls. Texture-local: shirt+legs span x[2,10) y[9,19).
+const BODY_WIDTH = 8;
+const BODY_HEIGHT = 10;
 const BODY_OFFSET_X = 2;
-const BODY_OFFSET_Y = 8;
+const BODY_OFFSET_Y = 9;
 
 // Entrance floor (world tiles x8-13, y14-19), near the front door.
 export const PLAYER_SPAWN_TILE_X = 10;
@@ -53,34 +56,34 @@ function generateFacingTexture(scene: Phaser.Scene, facing: Facing): void {
   const g = scene.add.graphics();
 
   g.fillStyle(SHIRT_COLOR, 1);
-  g.fillRect(2, 8, 6, 5);
+  g.fillRect(2, 9, 8, 6);
   g.fillStyle(LEGS_COLOR, 1);
-  g.fillRect(2, 13, 2, 3);
-  g.fillRect(6, 13, 2, 3);
+  g.fillRect(2, 15, 3, 4);
+  g.fillRect(7, 15, 3, 4);
 
   g.fillStyle(SKIN_COLOR, 1);
-  g.fillRect(2, 0, 6, 8);
+  g.fillRect(2, 0, 8, 9);
 
   g.fillStyle(HAIR_COLOR, 1);
   if (facing === "down") {
-    g.fillRect(2, 0, 6, 3);
-    g.fillRect(2, 3, 1, 3);
-    g.fillRect(7, 3, 1, 3);
+    g.fillRect(2, 0, 8, 4);
+    g.fillRect(2, 4, 1, 4);
+    g.fillRect(9, 4, 1, 4);
     g.fillStyle(EYE_COLOR, 1);
-    g.fillRect(3, 4, 1, 1);
-    g.fillRect(6, 4, 1, 1);
+    g.fillRect(4, 5, 1, 1);
+    g.fillRect(7, 5, 1, 1);
   } else if (facing === "up") {
-    g.fillRect(2, 0, 6, 8);
+    g.fillRect(2, 0, 8, 9);
   } else if (facing === "left") {
-    g.fillRect(2, 0, 6, 3);
-    g.fillRect(5, 3, 3, 5);
+    g.fillRect(2, 0, 8, 4);
+    g.fillRect(6, 4, 4, 6);
     g.fillStyle(EYE_COLOR, 1);
-    g.fillRect(2, 4, 1, 1);
+    g.fillRect(2, 5, 1, 1);
   } else {
-    g.fillRect(2, 0, 6, 3);
-    g.fillRect(2, 3, 3, 5);
+    g.fillRect(2, 0, 8, 4);
+    g.fillRect(2, 4, 4, 6);
     g.fillStyle(EYE_COLOR, 1);
-    g.fillRect(7, 4, 1, 1);
+    g.fillRect(9, 5, 1, 1);
   }
 
   g.generateTexture(key, PLAYER_WIDTH, PLAYER_HEIGHT);
