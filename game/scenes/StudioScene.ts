@@ -1,18 +1,14 @@
 import * as Phaser from "phaser";
-import { TILE_SIZE, WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
-import { ORIENTATIONS, projectedSizeFor } from "@/game/world/projection";
-import type { ViewOrientation } from "@/game/world/projection";
-import { ROOMS, STAIRCASES } from "@/game/world/rooms";
-import { LEVELS } from "@/game/types/world";
-import type { Level, StaircaseDef } from "@/game/types/world";
+import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
+import { RENDER_SCALE } from "@/game/config/gameConfig";
+import { getCameraMode, projectedSize, toggleCameraMode } from "@/game/world/projection";
+import { ROOMS } from "@/game/world/rooms";
 import { createRoomLabel } from "@/game/world/studioWorld";
-import { createRoomFloor } from "@/game/world/floorSystem";
+import { createHouseFloor } from "@/game/world/floorSystem";
 import { createDoorDecorations, createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
 import { createFurniture } from "@/game/world/furnitureSystem";
-import { createWorldCollision, setGroupEnabled } from "@/game/world/collision";
-import { createStaircaseVisual, isOnStaircase } from "@/game/world/staircase";
+import { createWorldCollision } from "@/game/world/collision";
 import { updateWallOcclusion } from "@/game/world/occlusionSystem";
-import { CameraController, CAMERA_EVENTS, type RotateStartPayload } from "@/game/world/cameraController";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import { TouchInput } from "@/game/input/TouchInput";
@@ -23,125 +19,72 @@ import { INTERACTABLES } from "@/game/data/interactables";
 import { GAME_EVENTS, SCENE_EVENTS } from "@/game/types/interaction";
 import type { Interactable } from "@/game/types/interaction";
 
-type LayerObject = Phaser.GameObjects.Graphics | Phaser.GameObjects.Text;
-interface TrackedObject {
-  obj: LayerObject;
-  baseX: number;
-  baseY: number;
-  baseDepth: number;
-}
-
-/**
- * Depth bias applied to whichever layer is currently the larger (nearer) of
- * the two during a rotation fold, so it draws cleanly over the smaller one
- * instead of the two layers' individually Y-sorted objects interleaving.
- * Far above DEPTH.PROMPT (5000) — the only other thing on screen — with
- * headroom to spare.
- */
-const FOLD_TOP_DEPTH_BIAS = 100_000;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2;
+const ZOOM_STEP = 0.1;
 
 export class StudioScene extends Phaser.Scene {
   player!: Player;
   /** Written by the mobile D-pad overlay; read by Player alongside KeyboardInput. */
   readonly touchInput = new TouchInput();
-  private cameraController!: CameraController;
-  private readonly interactionSystems = new Map<Level, InteractionSystem>();
-  private readonly interactionPrompts = new Map<Level, InteractionPrompt>();
-
-  private get activeInteractionSystem(): InteractionSystem {
-    return this.interactionSystems.get(this.activeLevel)!;
-  }
-
-  private get activeInteractionPrompt(): InteractionPrompt {
-    return this.interactionPrompts.get(this.activeLevel)!;
-  }
+  private interactionSystem!: InteractionSystem;
+  private interactionPrompt!: InteractionPrompt;
   private inputLocked = false;
-  private transitioningFloor = false;
-  /** Shared vertical hinge (world/projected X) both layers fold toward during a rotation — captured once per rotation so it doesn't drift as the camera nudges. */
-  private rotationPivotX = 0;
-  private activeLevel: Level = 0;
-  private readonly collisionGroups = new Map<Level, Phaser.Physics.Arcade.StaticGroup>();
-  private readonly layerObjects = new Map<string, TrackedObject[]>();
-  private readonly wallSegmentsByOrientation = new Map<string, WallSegment[]>();
-
-  private layerKey(level: Level, orientation: ViewOrientation): string {
-    return `${level}:${orientation}`;
-  }
+  private wallSegments: WallSegment[] = [];
+  /** Every static level Graphics/Text object, so a camera-mode toggle can destroy and redraw them under the new projection instead of leaking the old ones. */
+  private levelObjects: Phaser.GameObjects.GameObject[] = [];
+  private zoomFactor = 1;
 
   constructor() {
     super("StudioScene");
   }
 
   create(): void {
-    this.cameraController = new CameraController(this);
-    this.buildOrientationLayers();
+    this.buildLevel();
 
     this.physics.world.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
 
     const input = new CombinedInput([new KeyboardInput(this), this.touchInput]);
     this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, input);
 
-    for (const level of LEVELS) {
-      const group = createWorldCollision(this, level);
-      setGroupEnabled(group, level === this.activeLevel);
-      this.collisionGroups.set(level, group);
-      this.physics.add.collider(this.player.sprite, group);
-    }
+    const collisionGroup = createWorldCollision(this);
+    this.physics.add.collider(this.player.sprite, collisionGroup);
 
-    const size = projectedSizeFor(this.cameraController.getOrientation());
-    this.cameras.main.setBounds(0, 0, size.width, size.height);
+    this.applyCameraFraming();
     this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
     this.cameras.main.setDeadzone(48, 28);
 
-    for (const level of LEVELS) {
-      const levelInteractables = INTERACTABLES.filter((i) => i.level === level);
-      const system = new InteractionSystem(this, levelInteractables);
-      const prompt = new InteractionPrompt(this, system, this.player);
-      system.on(INTERACTION_EVENTS.Open, this.handleInteractionOpen, this);
-      system.on(
-        INTERACTION_EVENTS.Prompt,
-        (interactable: Interactable | null) => this.events.emit(SCENE_EVENTS.InteractionPromptChange, interactable),
-        this,
-      );
-      if (level !== this.activeLevel) prompt.setHidden(true);
-      this.interactionSystems.set(level, system);
-      this.interactionPrompts.set(level, prompt);
-    }
+    this.input.keyboard?.on("keydown-Q", this.toggleCamera, this);
+    this.input.keyboard?.on("keydown", this.handleZoomKey, this);
+    this.input.on("wheel", this.handleWheelZoom, this);
 
-    this.cameraController.on(CAMERA_EVENTS.RotateStart, this.handleRotateStart, this);
-    this.cameraController.on(CAMERA_EVENTS.RotateComplete, this.handleRotateComplete, this);
+    this.interactionSystem = new InteractionSystem(this, INTERACTABLES);
+    this.interactionPrompt = new InteractionPrompt(this, this.interactionSystem, this.player);
+    this.interactionSystem.on(INTERACTION_EVENTS.Open, this.handleInteractionOpen, this);
+    this.interactionSystem.on(
+      INTERACTION_EVENTS.Prompt,
+      (interactable: Interactable | null) => this.events.emit(SCENE_EVENTS.InteractionPromptChange, interactable),
+      this,
+    );
 
     this.input.keyboard?.on("keydown-ESC", this.handleEscape, this);
-    this.input.keyboard?.on("keydown-Q", () => this.rotateCameraLeft(), this);
-    this.input.keyboard?.on("keydown-R", () => this.rotateCameraRight(), this);
 
     this.game.events.emit(GAME_EVENTS.StudioReady, this);
   }
 
   update(): void {
-    if (this.cameraController.isRotating()) {
-      this.updateDuringRotation();
-      return;
-    }
     if (this.inputLocked) return;
 
-    const orientation = this.cameraController.getOrientation();
-    this.player.update(orientation);
-    updateWallOcclusion(
-      this.wallSegmentsByOrientation.get(this.layerKey(this.activeLevel, orientation))!,
-      this.player.worldX,
-      this.player.worldY,
-      orientation,
-    );
-    this.activeInteractionSystem.update(this.player.worldX, this.player.worldY);
-    this.activeInteractionPrompt.update();
-
-    if (!this.transitioningFloor) {
-      const stair = STAIRCASES.find(
-        (s) => s.level === this.activeLevel && isOnStaircase(s, this.player.worldX, this.player.worldY),
-      );
-      if (stair) this.beginFloorTransition(stair);
+    this.player.update();
+    // Only the isometric camera has a "wall between camera and player"
+    // concept to fade — top-down looks straight down, so every wall stays
+    // fully visible there (buildLevel() already redraws fresh, alpha=1
+    // walls on every mode toggle).
+    if (getCameraMode() === "isometric") {
+      updateWallOcclusion(this.wallSegments, this.player.worldX, this.player.worldY);
     }
+    this.interactionSystem.update(this.player.worldX, this.player.worldY);
+    this.interactionPrompt.update();
   }
 
   /** Called by React when a portfolio panel is closed via its own close button (not ESC). */
@@ -152,186 +95,62 @@ export class StudioScene extends Phaser.Scene {
   /** Called by the mobile [E] button — same trigger the keyboard E key uses internally. */
   interact(): void {
     if (this.inputLocked) return;
-    this.activeInteractionSystem.interact();
-  }
-
-  /** Called by the desktop Q key and the mobile ↺ button. No-op while a panel is open or a rotation is already in progress. */
-  rotateCameraLeft(): void {
-    if (this.inputLocked) return;
-    this.cameraController.rotateLeft();
-  }
-
-  /** Called by the desktop R key and the mobile ↻ button. No-op while a panel is open or a rotation is already in progress. */
-  rotateCameraRight(): void {
-    if (this.inputLocked) return;
-    this.cameraController.rotateRight();
+    this.interactionSystem.interact();
   }
 
   /**
-   * Builds the four camera orientations' worth of static geometry once, up
-   * front. Every Graphics/Text object still lives directly on the scene's
-   * own display list (never reparented into a Container — Phaser containers
-   * don't depth-sort their children, which would silently break the
-   * Y-based layering everything else here relies on); only one
-   * orientation's objects are visible at a time outside of a transition.
+   * Builds the house's static geometry. Called once up front, and again on
+   * every camera-mode toggle: every drawable derives its screen position by
+   * calling project(), so redrawing after toggleCameraMode() is the only
+   * way to move it to the new projection — the room/wall/door data these
+   * calls read from (ROOMS, buildWallGrid) is identical either way.
    */
-  private buildOrientationLayers(): void {
-    for (const level of LEVELS) {
-      for (const orientation of ORIENTATIONS) {
-        const objects: LayerObject[] = [];
-        const rooms = ROOMS.filter((r) => r.level === level);
-        const stairs = STAIRCASES.filter((s) => s.level === level);
+  private buildLevel(): void {
+    for (const obj of this.levelObjects) obj.destroy();
+    this.levelObjects = [];
 
-        for (const room of rooms) objects.push(createRoomFloor(this, room, orientation));
-        for (const stair of stairs) objects.push(createStaircaseVisual(this, stair, orientation));
+    this.levelObjects.push(createHouseFloor(this));
 
-        const wallSegments = createWalls(this, orientation, level);
-        objects.push(...wallSegments.map((segment) => segment.graphics));
-        objects.push(createDoorDecorations(this, orientation, level));
-        for (const room of rooms) {
-          const windowGraphics = createWindows(this, room, orientation);
-          if (windowGraphics) objects.push(windowGraphics);
-        }
-        for (const room of rooms) {
-          objects.push(...createFurniture(this, room, orientation));
-          objects.push(createRoomLabel(this, room, orientation));
-        }
-
-        const visible = level === this.activeLevel && orientation === this.cameraController.getOrientation();
-        const tracked = objects.map((obj) => {
-          obj.setVisible(visible);
-          return { obj, baseX: obj.x, baseY: obj.y, baseDepth: obj.depth };
-        });
-
-        const key = this.layerKey(level, orientation);
-        this.layerObjects.set(key, tracked);
-        this.wallSegmentsByOrientation.set(key, wallSegments);
-      }
+    this.wallSegments = createWalls(this);
+    this.levelObjects.push(...this.wallSegments.map((segment) => segment.graphics));
+    this.levelObjects.push(createDoorDecorations(this));
+    for (const room of ROOMS) {
+      const windows = createWindows(this, room);
+      if (windows) this.levelObjects.push(windows);
+    }
+    for (const room of ROOMS) {
+      this.levelObjects.push(...createFurniture(this, room));
+      this.levelObjects.push(createRoomLabel(this, room));
     }
   }
 
-  /**
-   * True continuous rotation, faked cheaply from the existing prebuilt
-   * layers: both the outgoing and incoming layer are scaled horizontally
-   * (never vertically — this is a yaw around a vertical hinge) around one
-   * shared pivot column, outgoing 1→0 while incoming 0→1 at the same rate.
-   * That reads as a single flat card turning edge-on and vanishing/unfolding
-   * at the hinge, not two flat images sliding past each other under a fade —
-   * no alpha is touched at all. The two layers' Y-sorted depths interleave
-   * arbitrarily where they overlap, so whichever layer is currently larger
-   * (nearer) gets a depth bias to draw cleanly over the smaller one.
-   */
-  private updateDuringRotation(): void {
-    const { from, to, t } = this.cameraController.getTransition();
-    const fromScale = 1 - t;
-    const toScale = t;
-    this.applyLayerFold(this.activeLevel, from, fromScale, fromScale >= toScale);
-    this.applyLayerFold(this.activeLevel, to, toScale, toScale > fromScale);
-    this.player.blendVisual(from, to, t);
+  /** Q: swap the fixed camera projection (isometric <-> top-down) and redraw the level under it. Never rotates the house — see buildLevel(). */
+  private toggleCamera(): void {
+    toggleCameraMode();
+    this.buildLevel();
+    this.applyCameraFraming();
+    this.player.reprojectVisual();
   }
 
-  private applyLayerFold(level: Level, orientation: ViewOrientation, scaleX: number, onTop: boolean): void {
-    for (const { obj, baseX, baseY, baseDepth } of this.layerObjects.get(this.layerKey(level, orientation))!) {
-      obj.setScale(scaleX, 1);
-      obj.setPosition(this.rotationPivotX * (1 - scaleX) + scaleX * baseX, baseY);
-      obj.setDepth(onTop ? baseDepth + FOLD_TOP_DEPTH_BIAS : baseDepth);
-    }
-  }
-
-  private handleRotateStart({ from, to }: RotateStartPayload): void {
-    this.inputLocked = true;
-    this.rotationPivotX = this.cameras.main.worldView.centerX;
-    this.player.stop();
-    this.activeInteractionPrompt.setHidden(true);
-    this.events.emit(SCENE_EVENTS.CameraRotateStart);
-
-    for (const { obj } of this.layerObjects.get(this.layerKey(this.activeLevel, to))!) obj.setVisible(true);
-
-    const fromSize = projectedSizeFor(from);
-    const toSize = projectedSizeFor(to);
-    this.cameras.main.setBounds(0, 0, Math.max(fromSize.width, toSize.width), Math.max(fromSize.height, toSize.height));
-    // Instant tracking for the short transition: a lerped follow would lag behind the blended visual position and reintroduce the jump/black-gap risk this is meant to avoid.
-    this.cameras.main.startFollow(this.player.visual, true, 1, 1);
-  }
-
-  private handleRotateComplete(orientation: ViewOrientation): void {
-    for (const [key, tracked] of this.layerObjects) {
-      const visible = key === this.layerKey(this.activeLevel, orientation);
-      for (const { obj, baseX, baseY, baseDepth } of tracked) {
-        obj.setVisible(visible);
-        obj.setScale(1, 1);
-        obj.setPosition(baseX, baseY);
-        obj.setDepth(baseDepth);
-      }
-    }
-
-    const size = projectedSizeFor(orientation);
+  /** Recomputes camera bounds from the active projection's extent and reapplies zoom, so toggling mode or zooming never crops the house. */
+  private applyCameraFraming(): void {
+    const size = projectedSize();
     this.cameras.main.setBounds(0, 0, size.width, size.height);
-    this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
-    this.player.reprojectVisual(orientation);
-
-    this.activeInteractionPrompt.setHidden(false);
-    this.inputLocked = false;
-    this.events.emit(SCENE_EVENTS.CameraRotateEnd);
+    this.cameras.main.setZoom(RENDER_SCALE * this.zoomFactor);
   }
 
-  private beginFloorTransition(stair: StaircaseDef): void {
-    this.transitioningFloor = true;
-    this.inputLocked = true;
-    this.player.stop();
-    this.activeInteractionPrompt.setHidden(true);
+  private handleZoomKey(event: KeyboardEvent): void {
+    if (event.code === "Equal" || event.code === "NumpadAdd") this.adjustZoom(ZOOM_STEP);
+    else if (event.code === "Minus" || event.code === "NumpadSubtract") this.adjustZoom(-ZOOM_STEP);
+  }
 
-    const orientation = this.cameraController.getOrientation();
-    const fromLevel = this.activeLevel;
-    const toLevel = stair.toLevel;
-    const fromObjects = this.layerObjects.get(this.layerKey(fromLevel, orientation))!;
-    const toObjects = this.layerObjects.get(this.layerKey(toLevel, orientation))!;
+  private handleWheelZoom(_pointer: Phaser.Input.Pointer, _objects: unknown, _deltaX: number, deltaY: number): void {
+    this.adjustZoom(deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP);
+  }
 
-    const fadeOut = { alpha: 1 };
-    this.tweens.add({
-      targets: fadeOut,
-      alpha: 0,
-      duration: 250,
-      ease: "Sine.easeInOut",
-      onUpdate: () => {
-        for (const { obj } of fromObjects) obj.setAlpha(fadeOut.alpha);
-      },
-      onComplete: () => {
-        for (const { obj } of fromObjects) {
-          obj.setVisible(false);
-          obj.setAlpha(1);
-        }
-
-        this.activeLevel = toLevel;
-        const targetX = stair.toTile.x * TILE_SIZE + TILE_SIZE / 2;
-        const targetY = stair.toTile.y * TILE_SIZE + TILE_SIZE / 2;
-        this.player.sprite.setPosition(targetX, targetY);
-        this.player.reprojectVisual(orientation);
-
-        setGroupEnabled(this.collisionGroups.get(fromLevel)!, false);
-        setGroupEnabled(this.collisionGroups.get(toLevel)!, true);
-
-        for (const { obj } of toObjects) {
-          obj.setVisible(true);
-          obj.setAlpha(0);
-        }
-        const fadeIn = { alpha: 0 };
-        this.tweens.add({
-          targets: fadeIn,
-          alpha: 1,
-          duration: 250,
-          ease: "Sine.easeInOut",
-          onUpdate: () => {
-            for (const { obj } of toObjects) obj.setAlpha(fadeIn.alpha);
-          },
-          onComplete: () => {
-            this.activeInteractionPrompt.setHidden(false);
-            this.transitioningFloor = false;
-            this.inputLocked = false;
-          },
-        });
-      },
-    });
+  private adjustZoom(delta: number): void {
+    this.zoomFactor = Phaser.Math.Clamp(this.zoomFactor + delta, ZOOM_MIN, ZOOM_MAX);
+    this.cameras.main.setZoom(RENDER_SCALE * this.zoomFactor);
   }
 
   private handleInteractionOpen(interactable: Interactable): void {
@@ -341,7 +160,7 @@ export class StudioScene extends Phaser.Scene {
   }
 
   private handleEscape(): void {
-    if (!this.inputLocked || this.cameraController.isRotating() || this.transitioningFloor) return;
+    if (!this.inputLocked) return;
     this.inputLocked = false;
     this.events.emit(SCENE_EVENTS.InteractionClose);
   }

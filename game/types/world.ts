@@ -1,6 +1,3 @@
-export type Level = 0 | 1;
-export const LEVELS: readonly Level[] = [0, 1];
-
 export interface TileRect {
   x: number;
   y: number;
@@ -65,7 +62,6 @@ export type FloorType = "wood" | "tile" | "workshop";
 
 export interface RoomDef {
   id: string;
-  level: Level;
   label: string;
   tiles: TileRect;
   floorColor: number;
@@ -74,13 +70,4 @@ export interface RoomDef {
   furniture: FurniturePiece[];
   /** Decorative-only window rects, in absolute world-pixel space, sitting on the room's border wall band. Never collides. */
   windows?: PixelRect[];
-}
-
-export interface StaircaseDef {
-  id: string;
-  level: Level;
-  tiles: TileRect;
-  trigger: TileRect;
-  toLevel: Level;
-  toTile: { x: number; y: number };
 }

@@ -2,8 +2,7 @@ import * as Phaser from "phaser";
 import { TILE_SIZE } from "@/game/config/world";
 import { darken, lighten, PALETTE } from "@/game/world/palette";
 import { visualDepth } from "@/game/world/depth";
-import { project, toViewRect } from "@/game/world/projection";
-import type { ViewOrientation } from "@/game/world/projection";
+import { project } from "@/game/world/projection";
 import type { FurnitureKind, RoomDef } from "@/game/types/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
@@ -288,38 +287,31 @@ function drawRiser(g: Phaser.GameObjects.Graphics, topLeft: { x: number; y: numb
 }
 
 /**
- * Draws every piece of furniture in a room (for one camera orientation):
- * floor shadow, a riser for real height, then the recognizable icon face on
- * top. Each piece's footprint is rotated via toViewRect first, so its
- * anchor position AND on-screen width/height are both correct for the
- * current orientation (90/270 swap which world axis reads as "wide" on
- * screen) — the icon-drawing functions themselves are unchanged, they just
- * receive a possibly reproportioned rect, which keeps every piece
- * recognizable without needing orientation-specific icon art.
+ * Draws every piece of furniture in a room: floor shadow, a riser for real
+ * height, then the recognizable icon face on top.
  */
-export function createFurniture(scene: Phaser.Scene, room: RoomDef, orientation: ViewOrientation): Phaser.GameObjects.Graphics[] {
+export function createFurniture(scene: Phaser.Scene, room: RoomDef): Phaser.GameObjects.Graphics[] {
   const created: Phaser.GameObjects.Graphics[] = [];
   for (const piece of room.furniture) {
     const worldX = px(room.tiles.x + piece.x);
     const worldY = px(room.tiles.y + piece.y);
     const w = px(piece.w);
     const h = px(piece.h);
-    const view = toViewRect({ x: worldX, y: worldY, w, h }, orientation);
     const flush = piece.kind ? FLUSH_KINDS.has(piece.kind) : false;
     const heightPx = piece.kind ? (EXTRUSION_HEIGHT[piece.kind] ?? 3) : 3;
 
-    const g = scene.add.graphics().setDepth(visualDepth(worldX + w / 2, worldY + h, orientation));
+    const g = scene.add.graphics().setDepth(visualDepth(worldY + h));
 
     if (!flush) {
-      const shadowAnchor = project(view.x, view.y + view.h);
+      const shadowAnchor = project(worldX, worldY + h);
       g.fillStyle(0x000000, 0.22);
-      g.fillRect(shadowAnchor.x + 1, shadowAnchor.y - 1, Math.max(1, view.w - 2), 2);
+      g.fillRect(shadowAnchor.x + 1, shadowAnchor.y - 1, Math.max(1, w - 2), 2);
     }
 
-    const riserTop = project(view.x, view.y + view.h, heightPx);
-    drawRiser(g, riserTop, view.w, heightPx, piece.color);
+    const riserTop = project(worldX, worldY + h, heightPx);
+    drawRiser(g, riserTop, w, heightPx, piece.color);
 
-    const iconRect: Rect = { x: riserTop.x, y: riserTop.y - view.h, w: view.w, h: view.h };
+    const iconRect: Rect = { x: riserTop.x, y: riserTop.y - h, w, h };
     const draw = piece.kind ? DRAW_BY_KIND[piece.kind] : undefined;
     if (draw) draw(g, iconRect, piece.color);
     else box(g, iconRect, piece.color);

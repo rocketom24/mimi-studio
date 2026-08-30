@@ -10,6 +10,20 @@ export const PALETTE = {
   metal: 0x8894a3,
 } as const;
 
+/** Reference-image architecture palette: warm wood floor, beige walls, dark charcoal outlines. */
+export const ARCH_PALETTE = {
+  floorMain: 0xa9784f,
+  floorAlt: 0xb9895e,
+  floorGrout: 0x7a573f,
+  wallHighlight: 0xe7d9c0,
+  wallShadow: 0xb5a287,
+  outline: 0x352b2b,
+  outlineDark: 0x292326,
+  door: 0x6b4028,
+  windowGlass: 0x8db7c4,
+  windowFrame: 0x493b34,
+} as const;
+
 /** Shift a 0xRRGGBB color's channels by `amount` (-255..255), clamped. */
 function shade(color: number, amount: number): number {
   const clamp = (v: number) => Math.max(0, Math.min(255, v));

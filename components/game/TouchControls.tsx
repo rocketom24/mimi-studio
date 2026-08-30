@@ -9,8 +9,6 @@ type Direction = keyof MovementIntent;
 interface TouchControlsProps {
   onDirection: (direction: Direction, pressed: boolean) => void;
   onInteract: () => void;
-  onRotateLeft: () => void;
-  onRotateRight: () => void;
   canInteract: boolean;
   disabled: boolean;
 }
@@ -68,11 +66,8 @@ function DpadButton({
   );
 }
 
-const ROTATE_BUTTON_STYLE =
-  "flex h-10 w-10 touch-none select-none items-center justify-center rounded border-2 border-[#6f5c9e] bg-[#1e1730]/70 text-base leading-none text-[#f2ecff] shadow-[2px_2px_0_0_rgba(0,0,0,0.5)] active:translate-y-px active:bg-[#3a2f4d] disabled:opacity-40";
-
-/** HTML overlay D-pad + interact + rotate buttons. Drives TouchInput/InteractionSystem/StudioScene through the callbacks — never touches Phaser objects directly. */
-export default function TouchControls({ onDirection, onInteract, onRotateLeft, onRotateRight, canInteract, disabled }: TouchControlsProps) {
+/** HTML overlay D-pad + interact button. Drives TouchInput/InteractionSystem/StudioScene through the callbacks — never touches Phaser objects directly. */
+export default function TouchControls({ onDirection, onInteract, canInteract, disabled }: TouchControlsProps) {
   return (
     <div
       className="pointer-events-none absolute inset-0 z-20"
@@ -83,27 +78,6 @@ export default function TouchControls({ onDirection, onInteract, onRotateLeft, o
         paddingTop: "env(safe-area-inset-top)",
       }}
     >
-      <div className="pointer-events-auto absolute top-3 right-3 flex gap-2">
-        <button
-          type="button"
-          aria-label="Rotate camera left"
-          disabled={disabled}
-          onClick={onRotateLeft}
-          className={ROTATE_BUTTON_STYLE}
-        >
-          ↺
-        </button>
-        <button
-          type="button"
-          aria-label="Rotate camera right"
-          disabled={disabled}
-          onClick={onRotateRight}
-          className={ROTATE_BUTTON_STYLE}
-        >
-          ↻
-        </button>
-      </div>
-
       <div className="pointer-events-auto absolute bottom-6 left-4 grid grid-cols-3 grid-rows-3 gap-1">
         {DPAD_BUTTONS.map(({ direction, glyph, label, cell }) => (
           <DpadButton

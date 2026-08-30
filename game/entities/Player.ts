@@ -4,8 +4,7 @@ import { KeyboardInput } from "@/game/input/KeyboardInput";
 import type { InputSource } from "@/game/types/input";
 import type { Facing, PlayerState } from "@/game/types/player";
 import { visualDepth } from "@/game/world/depth";
-import { projectOriented, viewToWorldDelta } from "@/game/world/projection";
-import type { ViewOrientation } from "@/game/world/projection";
+import { project, screenToWorldDelta } from "@/game/world/projection";
 
 export const PLAYER_WIDTH = 10;
 export const PLAYER_HEIGHT = 16;
@@ -17,10 +16,9 @@ const BODY_HEIGHT = 8;
 const BODY_OFFSET_X = 2;
 const BODY_OFFSET_Y = 8;
 
-// Entrance floor (world tiles x4-16, y1-9), clear of the shelf at world
-// (6,2) and the mat at world (9,6)-(11,7).
-export const PLAYER_SPAWN_TILE_X = 7;
-export const PLAYER_SPAWN_TILE_Y = 3;
+// Entrance floor (world tiles x8-13, y14-19), near the front door.
+export const PLAYER_SPAWN_TILE_X = 10;
+export const PLAYER_SPAWN_TILE_Y = 18;
 export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 
@@ -126,7 +124,7 @@ export class Player {
 
     this.visual = scene.add.sprite(x, y, textureKey(this.state.facing));
     this.visual.setOrigin(0.5, 1);
-    this.visual.setDepth(visualDepth(x, y, 0));
+    this.visual.setDepth(visualDepth(y));
 
     this.bobTween = scene.tweens.add({
       targets: this.bob,
@@ -138,7 +136,7 @@ export class Player {
     });
   }
 
-  update(orientation: ViewOrientation): void {
+  update(): void {
     const intent = this.input.getIntent();
     let screenDx = 0;
     let screenDy = 0;
@@ -151,40 +149,22 @@ export class Player {
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     if (moving) {
       const length = Math.hypot(screenDx, screenDy);
-      const world = viewToWorldDelta(screenDx / length, screenDy / length, orientation);
+      const world = screenToWorldDelta(screenDx / length, screenDy / length);
       body.setVelocity(world.x * PLAYER_SPEED, world.y * PLAYER_SPEED);
-      // Facing tracks the screen-space intent (what the visitor pressed), not the
-      // rotated world direction — pressing screen-right must always show Mimi
-      // facing screen-right, regardless of camera orientation.
       this.setFacing(facingFromDelta(screenDx, screenDy));
     } else {
       body.setVelocity(0, 0);
     }
     this.setAnimationState(moving ? "walking" : "idle");
 
-    this.reprojectVisual(orientation);
+    this.reprojectVisual();
   }
 
-  /** Repositions the visual sprite for the given orientation only — no input/movement/physics. Used both by the normal per-frame update() and to snap the visual once a rotation finishes. */
-  reprojectVisual(orientation: ViewOrientation): void {
-    const projected = projectOriented(this.sprite.x, this.sprite.y, orientation);
+  /** Repositions the visual sprite from the physics-authoritative sprite position — no input/movement/physics. */
+  reprojectVisual(): void {
+    const projected = project(this.sprite.x, this.sprite.y);
     this.visual.setPosition(projected.x, projected.y + this.bob.offset);
-    this.visual.setDepth(visualDepth(this.sprite.x, this.sprite.y, orientation));
-  }
-
-  /**
-   * Mid-rotation only: blends the visual sprite's screen position/depth
-   * between its old- and new-orientation projections of the SAME logical
-   * point (sprite.x/y never changes) so Mimi turns smoothly with the
-   * apartment instead of snapping once the camera settles.
-   */
-  blendVisual(fromOrientation: ViewOrientation, toOrientation: ViewOrientation, t: number): void {
-    const a = projectOriented(this.sprite.x, this.sprite.y, fromOrientation);
-    const b = projectOriented(this.sprite.x, this.sprite.y, toOrientation);
-    this.visual.setPosition(Phaser.Math.Linear(a.x, b.x, t), Phaser.Math.Linear(a.y, b.y, t) + this.bob.offset);
-    const depthA = visualDepth(this.sprite.x, this.sprite.y, fromOrientation);
-    const depthB = visualDepth(this.sprite.x, this.sprite.y, toOrientation);
-    this.visual.setDepth(Phaser.Math.Linear(depthA, depthB, t));
+    this.visual.setDepth(visualDepth(this.sprite.y));
   }
 
   /** Logical world X — the physics-authoritative position, unprojected. Use for interaction checks and room lookups. */
