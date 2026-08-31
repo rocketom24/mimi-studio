@@ -1,12 +1,11 @@
 import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
-import { GAME_HEIGHT, GAME_WIDTH, RENDER_SCALE } from "@/game/config/gameConfig";
 import { projectedSize, toggleCameraMode } from "@/game/world/projection";
 import { ROOMS } from "@/game/world/rooms";
 import { createHouseFloor } from "@/game/world/floorSystem";
 import { createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
 import { createDoors, updateDoors, type DoorSegment } from "@/game/world/doorSystem";
-import { createFurniture } from "@/game/world/furnitureSystem";
+import { createFurniture, preloadFurnitureSprites } from "@/game/world/furnitureSystem";
 import { createWorldCollision } from "@/game/world/collision";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
@@ -18,13 +17,13 @@ import { INTERACTABLES } from "@/game/data/interactables";
 import { GAME_EVENTS, SCENE_EVENTS } from "@/game/types/interaction";
 import type { Interactable } from "@/game/types/interaction";
 
-// House projects to ~504x284 world-units (see projectedSize()) inside a
-// 560x315 canvas — camera bounds already equal the house exactly (no slack),
-// so zooming out just reveals background void beyond the house, it never
-// reveals more world. 0.89 is the lowest factor that still fills ~80% of
-// the canvas with the house (0.5 used to shrink it to ~45%, mostly void).
-const ZOOM_MIN = 0.89;
-const ZOOM_MAX = 2;
+// applyCameraFraming's fit-zoom already sizes the house to fill FILL_FACTOR
+// of whatever viewport it's given (see computeFitZoom), so ZOOM_MIN/MAX are
+// relative multipliers ON TOP of that fit, not absolute zoom levels — 1
+// always means "fitted", regardless of window size/aspect.
+const FILL_FACTOR = 0.8;
+const ZOOM_MIN = 0.6;
+const ZOOM_MAX = 2.5;
 const ZOOM_STEP = 0.1;
 
 export class StudioScene extends Phaser.Scene {
@@ -42,6 +41,10 @@ export class StudioScene extends Phaser.Scene {
 
   constructor() {
     super("StudioScene");
+  }
+
+  preload(): void {
+    preloadFurnitureSprites(this);
   }
 
   create(): void {
@@ -63,6 +66,7 @@ export class StudioScene extends Phaser.Scene {
     this.input.keyboard?.on("keydown-Q", this.toggleCamera, this);
     this.input.keyboard?.on("keydown", this.handleZoomKey, this);
     this.input.on("wheel", this.handleWheelZoom, this);
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.handleGameResize, this);
 
     this.interactionSystem = new InteractionSystem(this, INTERACTABLES);
     this.interactionPrompt = new InteractionPrompt(this, this.interactionSystem, this.player);
@@ -133,11 +137,22 @@ export class StudioScene extends Phaser.Scene {
     this.player.reprojectVisual();
   }
 
-  /** Recomputes camera bounds from the active projection's extent and reapplies zoom, so toggling mode or zooming never crops the house. */
+  /** Recomputes camera bounds from the active projection's extent and reapplies zoom, so toggling mode, zooming, or resizing the window never crops the house. */
   private applyCameraFraming(): void {
     const bounds = this.computeCameraBounds();
     this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
-    this.cameras.main.setZoom(RENDER_SCALE * this.zoomFactor);
+    this.cameras.main.setZoom(this.computeFitZoom() * this.zoomFactor);
+  }
+
+  /** Called by Phaser's ScaleManager whenever the canvas is resized (window resize, container resize) — the game size is no longer a fixed constant, so every viewport-dependent calc has to redo itself here instead of once at create(). */
+  private handleGameResize(): void {
+    this.applyCameraFraming();
+  }
+
+  /** Zoom level at which the house's whole projected extent fits inside FILL_FACTOR of the current viewport — the baseline user zoom (zoomFactor=1) multiplies against. Recomputed every call instead of cached since the viewport size changes continuously with the window. */
+  private computeFitZoom(): number {
+    const size = projectedSize();
+    return Math.min(this.scale.width / size.width, this.scale.height / size.height) * FILL_FACTOR;
   }
 
   /**
@@ -151,8 +166,9 @@ export class StudioScene extends Phaser.Scene {
    */
   private computeCameraBounds(): { x: number; y: number; width: number; height: number } {
     const size = projectedSize();
-    const viewWidth = GAME_WIDTH / (RENDER_SCALE * this.zoomFactor);
-    const viewHeight = GAME_HEIGHT / (RENDER_SCALE * this.zoomFactor);
+    const zoom = this.computeFitZoom() * this.zoomFactor;
+    const viewWidth = this.scale.width / zoom;
+    const viewHeight = this.scale.height / zoom;
     const width = Math.max(size.width, viewWidth);
     const height = Math.max(size.height, viewHeight);
     return { x: (size.width - width) / 2, y: (size.height - height) / 2, width, height };
@@ -169,9 +185,7 @@ export class StudioScene extends Phaser.Scene {
 
   private adjustZoom(delta: number): void {
     this.zoomFactor = Phaser.Math.Clamp(this.zoomFactor + delta, ZOOM_MIN, ZOOM_MAX);
-    const bounds = this.computeCameraBounds();
-    this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
-    this.cameras.main.setZoom(RENDER_SCALE * this.zoomFactor);
+    this.applyCameraFraming();
     (window as unknown as { __CAM_DEBUG__?: unknown }).__CAM_DEBUG__ = {
       zoomFactor: this.zoomFactor,
       cameraZoom: this.cameras.main.zoom,

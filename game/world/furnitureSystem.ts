@@ -271,6 +271,72 @@ const EXTRUSION_HEIGHT: Partial<Record<FurnitureKind, number>> = {
 };
 
 /**
+ * Real-photo furniture kinds: rendered as a flat top-down-style PNG icon
+ * (see public/furniture) instead of a procedural shape, anchored to its
+ * floor point with a soft drop shadow. The same icon is used in both camera
+ * modes — isometric just places it on the projected floor point rather than
+ * reprojecting/shearing the image, a deliberate trade-off for realistic art
+ * with no per-mode asset.
+ */
+const SPRITE_PATH: Partial<Record<FurnitureKind, string>> = {
+  catBed: "/furniture/catBed.png",
+  foodBowl: "/furniture/foodBowl.png",
+  catTree: "/furniture/catTree.png",
+  catToy: "/furniture/catToy.png",
+  catLitterBox: "/furniture/catLitterBox.png",
+};
+
+/** Display width in world px — independent of (and usually larger than) the piece's collision footprint, so e.g. a tall cat tree can read at full size without blocking more floor than it should. */
+const SPRITE_DISPLAY_WIDTH: Partial<Record<FurnitureKind, number>> = {
+  catBed: px(2.2),
+  foodBowl: px(1.3),
+  catTree: px(2.0),
+  catToy: px(0.6),
+  catLitterBox: px(1.6),
+};
+
+function spriteTextureKey(kind: FurnitureKind): string {
+  return `furniture-${kind}`;
+}
+
+/** Loads every sprite-backed furniture kind's texture. Call once from the scene's preload(). */
+export function preloadFurnitureSprites(scene: Phaser.Scene): void {
+  for (const kind of Object.keys(SPRITE_PATH) as FurnitureKind[]) {
+    scene.load.image(spriteTextureKey(kind), SPRITE_PATH[kind]!);
+  }
+}
+
+/** Soft flattened drop shadow beneath a sprite piece, at its floor anchor. */
+function drawSpriteShadow(g: Phaser.GameObjects.Graphics, anchor: { x: number; y: number }, w: number): void {
+  g.fillStyle(0x000000, 0.25);
+  g.fillEllipse(anchor.x, anchor.y - 1, w * 0.8, Math.max(2, w * 0.22));
+}
+
+/** A sprite-backed piece: drop shadow + the real PNG icon, anchored bottom-center at the footprint's floor point and scaled to SPRITE_DISPLAY_WIDTH keeping its natural aspect ratio. */
+function createSpritePiece(
+  scene: Phaser.Scene,
+  worldX: number,
+  worldY: number,
+  w: number,
+  h: number,
+  kind: FurnitureKind,
+): (Phaser.GameObjects.Graphics | Phaser.GameObjects.Image)[] {
+  const anchor = project(worldX + w / 2, worldY + h);
+  const depth = visualDepth(worldY + h);
+
+  const shadow = scene.add.graphics().setDepth(depth);
+  drawSpriteShadow(shadow, anchor, w);
+
+  const image = scene.add.image(anchor.x, anchor.y, spriteTextureKey(kind)).setOrigin(0.5, 1).setDepth(depth + 0.1);
+  const naturalW = image.width || 1;
+  const naturalH = image.height || 1;
+  const displayWidth = SPRITE_DISPLAY_WIDTH[kind] ?? w;
+  image.setDisplaySize(displayWidth, displayWidth * (naturalH / naturalW));
+
+  return [shadow, image];
+}
+
+/**
  * Riser: the piece's physical height off the floor, drawn as a flat extruded
  * block (front face + east-edge sliver) between the floor plate and the
  * existing per-kind icon, which sits on top of it. Gives every piece a real
@@ -290,13 +356,19 @@ function drawRiser(g: Phaser.GameObjects.Graphics, topLeft: { x: number; y: numb
  * Draws every piece of furniture in a room: floor shadow, a riser for real
  * height, then the recognizable icon face on top.
  */
-export function createFurniture(scene: Phaser.Scene, room: RoomDef): Phaser.GameObjects.Graphics[] {
-  const created: Phaser.GameObjects.Graphics[] = [];
+export function createFurniture(scene: Phaser.Scene, room: RoomDef): Phaser.GameObjects.GameObject[] {
+  const created: Phaser.GameObjects.GameObject[] = [];
   for (const piece of room.furniture) {
     const worldX = px(room.tiles.x + piece.x);
     const worldY = px(room.tiles.y + piece.y);
     const w = px(piece.w);
     const h = px(piece.h);
+
+    if (piece.kind && SPRITE_PATH[piece.kind]) {
+      created.push(...createSpritePiece(scene, worldX, worldY, w, h, piece.kind));
+      continue;
+    }
+
     const flush = piece.kind ? FLUSH_KINDS.has(piece.kind) : false;
     const heightPx = piece.kind ? (EXTRUSION_HEIGHT[piece.kind] ?? 3) : 3;
 

@@ -468,7 +468,15 @@ export function createWalls(scene: Phaser.Scene): WallSegment[] {
   const segments: WallSegment[] = [];
   for (const run of runs) {
     const rect = run.thin;
-    const g = scene.add.graphics().setDepth(visualDepth(rect.y + rect.h));
+    // Back-wall runs (north row / west column) can span the full house
+    // height/width in one merged rect (see gridToRects' vertical-run
+    // merge), so visualDepth(rect.y + rect.h) would pin the whole solid
+    // block to its southmost row's depth — putting it in front of Mimi at
+    // every other row along the run. She can never stand behind the
+    // house's own outer wall, so it always belongs at the back instead of
+    // Y-sorting against her.
+    const depth = run.isBackWall ? DEPTH.DYNAMIC_BASE : visualDepth(rect.y + rect.h);
+    const g = scene.add.graphics().setDepth(depth);
     if (isTopdown) drawWallRunTopDown(g, run);
     else if (run.isBackWall) drawWallBlock(g, rect);
     else drawWallShadow(g, rect);

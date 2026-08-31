@@ -1,5 +1,6 @@
 import type { RoomDef } from "@/game/types/world";
 import { TILE_SIZE } from "@/game/config/world";
+import { PALETTE } from "@/game/world/palette";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
@@ -44,7 +45,40 @@ export const ROOMS: RoomDef[] = [
     floorColor: 0xa9784f,
     floorType: "wood",
     doors: [],
-    furniture: [],
+    // Door in from Living Room lands on the north wall at local columns
+    // 2-3 (see Living Room's south door, offset 2 length 2) — every piece
+    // below keeps that column span clear at the top of the room. Every
+    // piece here is a real-photo sprite (see furnitureSystem.ts's
+    // SPRITE_PATH) — `color` is unused for these kinds but still required
+    // by FurniturePiece, so it's set to something plausible.
+    //
+    // These sprite kinds render at SPRITE_DISPLAY_WIDTH (furnitureSystem.ts),
+    // which is independent of (and considerably bigger than) the collision
+    // footprint (w/h) below — catTree's 1x1 footprint draws as a 2.0x3.3-tile
+    // image, catBed's 1.8x1.3 draws as 2.2x1.4, etc. Spacing pieces by their
+    // small collision footprints alone (as this used to) put their real
+    // rendered art on top of each other. Positions below are chosen against
+    // the actual rendered image size instead, checked to have zero
+    // screen-space overlap between any two pieces.
+    //
+    // The fixed camera projects local room coords as screenX=(x-y),
+    // screenY=(x+y) (see projection.ts) — a room's 4 visual screen corners
+    // are NOT its 4 (x,y) corners: visual-north=(x0,y0), visual-east=(x1,y0),
+    // visual-south=(x1,y1), visual-west=(x0,y1). The upper-left screen edge
+    // (north point to west point) reads as "the left side" of the room, so
+    // tree/bed both sit along it — tree near the top (beside the door), bed
+    // further down toward the west point (bottom-left) — spaced apart in y
+    // so their real art doesn't collide. Litter sits along the south-east
+    // edge, biased toward its south end (bottom-right).
+    furniture: [
+      { x: 0.5, y: 0.9, w: 1.0, h: 1.0, color: 0xc9773a, kind: "catTree" },
+      { x: 0.7, y: 4.6, w: 1.8, h: 1.3, color: 0xe08a45, kind: "catBed" },
+      { x: 2.8, y: 5.2, w: 0.9, h: 0.35, color: PALETTE.blue, kind: "foodBowl", solid: false },
+      { x: 4.7, y: 4.0, w: 1.1, h: 0.9, color: PALETTE.green, kind: "catLitterBox" },
+      { x: 2.3, y: 1.1, w: 0.4, h: 0.25, color: 0xd97a3a, kind: "catToy", solid: false },
+      { x: 3.4, y: 1.5, w: 0.4, h: 0.25, color: 0xd97a3a, kind: "catToy", solid: false },
+      { x: 2.8, y: 2.3, w: 0.4, h: 0.25, color: 0xd97a3a, kind: "catToy", solid: false },
+    ],
   },
   {
     id: "entrance",

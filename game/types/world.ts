@@ -37,7 +37,12 @@ export type FurnitureKind =
   | "sink"
   | "toilet"
   | "bed"
-  | "nightstand";
+  | "nightstand"
+  | "catBed"
+  | "foodBowl"
+  | "catTree"
+  | "catToy"
+  | "catLitterBox";
 
 export interface FurniturePiece {
   x: number;
