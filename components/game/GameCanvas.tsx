@@ -9,14 +9,25 @@ import type { MovementIntent } from "@/game/types/input";
 import type { PortfolioSectionId } from "@/game/data/portfolio";
 import PortfolioPanel from "@/components/game/PortfolioPanel";
 import TouchControls from "@/components/game/TouchControls";
+import FurnitureEditorSidebar from "@/components/game/FurnitureEditorSidebar";
 import { useIsTouchDevice } from "@/lib/useIsTouchDevice";
+import { FURNITURE_ASSET_FILES_REGISTRY_KEY } from "@/game/world/furnitureEditorAssets";
 
-export default function GameCanvas() {
+/** Furniture Editor Mode is a dev-only tool — never rendered in a production build. */
+const FURNITURE_EDITOR_AVAILABLE = process.env.NODE_ENV !== "production";
+
+interface GameCanvasProps {
+  /** Every PNG filename in public/furniture/, discovered server-side by app/page.tsx — see lib/furnitureAssets.ts. */
+  furnitureAssetFiles: string[];
+}
+
+export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const sceneRef = useRef<StudioScene | null>(null);
   const [panelId, setPanelId] = useState<PortfolioSectionId | null>(null);
   const [canInteract, setCanInteract] = useState(false);
+  const [furnitureEditMode, setFurnitureEditMode] = useState(false);
   const isTouchDevice = useIsTouchDevice();
 
   useEffect(() => {
@@ -28,6 +39,8 @@ export default function GameCanvas() {
         if (cancelled || !containerRef.current || gameRef.current) return;
         const game = new PhaserModule.Game(createGameConfig(containerRef.current));
         gameRef.current = game;
+        // Set before the scene's preload() phase runs so it can read the list synchronously.
+        game.registry.set(FURNITURE_ASSET_FILES_REGISTRY_KEY, furnitureAssetFiles);
 
         game.events.once(GAME_EVENTS.StudioReady, (scene: StudioScene) => {
           sceneRef.current = scene;
@@ -48,7 +61,7 @@ export default function GameCanvas() {
       gameRef.current = null;
       sceneRef.current = null;
     };
-  }, []);
+  }, [furnitureAssetFiles]);
 
   const handleClose = () => {
     setPanelId(null);
@@ -69,6 +82,18 @@ export default function GameCanvas() {
     sceneRef.current?.interact();
   };
 
+  useEffect(() => {
+    sceneRef.current?.furnitureEditor.setActive(furnitureEditMode);
+  }, [furnitureEditMode]);
+
+  const handlePickFurnitureKind = (kind: string) => {
+    sceneRef.current?.furnitureEditor.beginPlacement(kind);
+  };
+
+  const handleSaveFurnitureLayout = () => {
+    sceneRef.current?.furnitureEditor.save();
+  };
+
   return (
     <div className="relative h-full w-full overflow-hidden">
       <div ref={containerRef} className="h-full w-full" />
@@ -81,6 +106,22 @@ export default function GameCanvas() {
         />
       )}
       <PortfolioPanel sectionId={panelId} onClose={handleClose} />
+      {FURNITURE_EDITOR_AVAILABLE && (
+        <button
+          type="button"
+          onClick={() => setFurnitureEditMode((prev) => !prev)}
+          className="absolute top-2 right-2 z-10 border-2 border-[#6f5c9e] bg-[#1e1730] px-3 py-1 font-mono text-xs font-bold uppercase tracking-wide text-[#ffe9a8] hover:bg-[#3a2f4d] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ffe9a8]"
+        >
+          {furnitureEditMode ? "Exit Edit" : "Edit"}
+        </button>
+      )}
+      {FURNITURE_EDITOR_AVAILABLE && furnitureEditMode && (
+        <FurnitureEditorSidebar
+          furnitureAssetFiles={furnitureAssetFiles}
+          onPickKind={handlePickFurnitureKind}
+          onSave={handleSaveFurnitureLayout}
+        />
+      )}
     </div>
   );
 }

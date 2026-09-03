@@ -569,19 +569,24 @@ function drawWallRunTopDown(g: Phaser.GameObjects.Graphics, run: WallRun): void 
  * doesn't know about isBackWall at all — so drawing its outline is what lets
  * her see the boundary coming instead of walking into it blind, repeatedly.
  */
-function drawWallShadow(g: Phaser.GameObjects.Graphics, rect: PixelRect): void {
+function drawWallShadow(g: Phaser.GameObjects.Graphics, rect: PixelRect, opts: { fill?: boolean; stroke?: boolean } = {}): void {
+  const { fill = true, stroke = true } = opts;
   const nw = project(rect.x, rect.y);
   const ne = project(rect.x + rect.w, rect.y);
   const se = project(rect.x + rect.w, rect.y + rect.h);
   const sw = project(rect.x, rect.y + rect.h);
 
-  g.fillStyle(darken(WALL_COLOR, 35), FRONT_WALL_SHADOW_ALPHA);
-  g.fillPoints([nw, ne, se, sw], true);
-  g.lineStyle(1, ARCH_PALETTE.outline, 0.4);
-  g.strokePoints([nw, ne, se, sw], true);
+  if (fill) {
+    g.fillStyle(darken(WALL_COLOR, 35), FRONT_WALL_SHADOW_ALPHA);
+    g.fillPoints([nw, ne, se, sw], true);
+  }
+  if (stroke) {
+    g.lineStyle(1, ARCH_PALETTE.outline, 0.4);
+    g.strokePoints([nw, ne, se, sw], true);
+  }
 }
 
-/** Opacity of a "front" wall's flat shadow (see drawWallShadow) — also what a front-wall door leaf fades to at closed, so it blends into the same invisible band instead of sitting on it as an opaque block (see doorSystem's drawDoorLeaf). */
+/** Opacity of a "front" wall's flat shadow (see drawWallShadow). */
 export const FRONT_WALL_SHADOW_ALPHA = 0.45;
 
 /**
@@ -596,6 +601,22 @@ export const FRONT_WALL_SHADOW_ALPHA = 0.45;
  * read as openings either way — doorSystem draws their leaf independently
  * of wall styling.
  */
+/**
+ * Slices a rect into TILE_SIZE-tall horizontal bands (the last one clipped
+ * to whatever remains) — see createWalls' front-wall split for why.
+ */
+function splitIntoRowBands(rect: PixelRect): PixelRect[] {
+  const bands: PixelRect[] = [];
+  const end = rect.y + rect.h;
+  for (let y = rect.y; y < end; y += TILE_SIZE) {
+    bands.push({ x: rect.x, y, w: rect.w, h: Math.min(TILE_SIZE, end - y) });
+  }
+  return bands;
+}
+
+/** Vertical overlap (world px) added to each band's *fill* geometry only (not its stored rect/depth) so adjacent bands' translucent quads share a hair of overlap instead of exactly abutting — abutting polygons each anti-alias their own edge independently and show as a visible seam line. */
+const BAND_FILL_OVERLAP_PX = 1;
+
 export function createWalls(scene: Phaser.Scene): WallSegment[] {
   const isTopdown = getCameraMode() === "topdown";
   const grid = buildWallGrid();
@@ -610,19 +631,46 @@ export function createWalls(scene: Phaser.Scene): WallSegment[] {
   const segments: WallSegment[] = [];
   for (const run of runs) {
     const rect = run.thin;
-    // Back-wall runs (north row / west column) can span the full house
-    // height/width in one merged rect (see gridToRects' vertical-run
-    // merge), so visualDepth(rect.y + rect.h) would pin the whole solid
-    // block to its southmost row's depth — putting it in front of Mimi at
-    // every other row along the run. She can never stand behind the
-    // house's own outer wall, so it always belongs at the back instead of
-    // Y-sorting against her.
-    const depth = run.isBackWall ? DEPTH.DYNAMIC_BASE : visualDepth(rect.y + rect.h);
-    const g = scene.add.graphics().setDepth(depth);
-    if (isTopdown) drawWallRunTopDown(g, run);
-    else if (run.isBackWall) drawWallBlock(g, rect);
-    else drawWallShadow(g, rect);
-    segments.push({ rect, graphics: g });
+    if (isTopdown) {
+      const g = scene.add.graphics().setDepth(run.isBackWall ? DEPTH.DYNAMIC_BASE : visualDepth(rect.y + rect.h));
+      drawWallRunTopDown(g, run);
+      segments.push({ rect, graphics: g });
+      continue;
+    }
+    if (run.isBackWall) {
+      // Back-wall runs (north row / west column) can span the full house
+      // height/width in one merged rect (see gridToRects' vertical-run
+      // merge), so visualDepth(rect.y + rect.h) would pin the whole solid
+      // block to its southmost row's depth — putting it in front of Mimi at
+      // every other row along the run. She can never stand behind the
+      // house's own outer wall, so it always belongs at the back instead of
+      // Y-sorting against her.
+      const g = scene.add.graphics().setDepth(DEPTH.DYNAMIC_BASE);
+      drawWallBlock(g, rect);
+      segments.push({ rect, graphics: g });
+      continue;
+    }
+    // Front (translucent) walls have the same merged-rect problem as back
+    // walls above, but can't take the same fix — they're meant to Y-sort
+    // per row (that's the whole point of fading in front of Mimi/furniture
+    // only where she's actually behind them). So instead of one flat depth
+    // for the whole run, split the FILL into per-tile-row bands, each
+    // Y-sorted off its own southmost edge — a band near a run's north end
+    // no longer inherits a run spanning multiple rows' pinned-to-the-south
+    // depth. The boundary outline stays a single unsplit stroke (drawn at
+    // the run's own northmost, never-covers-anything depth) instead of one
+    // stroke per band, which would draw a visible seam line at every
+    // internal row join.
+    for (const band of splitIntoRowBands(rect)) {
+      const g = scene.add.graphics().setDepth(visualDepth(band.y + band.h));
+      const fillY0 = Math.max(rect.y, band.y - BAND_FILL_OVERLAP_PX);
+      const fillY1 = Math.min(rect.y + rect.h, band.y + band.h + BAND_FILL_OVERLAP_PX);
+      drawWallShadow(g, { x: band.x, y: fillY0, w: band.w, h: fillY1 - fillY0 }, { stroke: false });
+      segments.push({ rect: band, graphics: g });
+    }
+    const outline = scene.add.graphics().setDepth(visualDepth(rect.y));
+    drawWallShadow(outline, rect, { fill: false });
+    segments.push({ rect, graphics: outline });
   }
   return segments;
 }

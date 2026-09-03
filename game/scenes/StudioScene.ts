@@ -7,6 +7,8 @@ import { createWalls, createWindows, type WallSegment } from "@/game/world/wallS
 import { createDoors, updateDoors, type DoorSegment } from "@/game/world/doorSystem";
 import { createFurniture, preloadFurnitureSprites } from "@/game/world/furnitureSystem";
 import { createWorldCollision } from "@/game/world/collision";
+import { FurnitureEditor } from "@/game/world/furnitureEditor";
+import { FURNITURE_ASSET_FILES_REGISTRY_KEY, preloadEditorFurnitureSprites } from "@/game/world/furnitureEditorAssets";
 import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import { TouchInput } from "@/game/input/TouchInput";
@@ -32,6 +34,8 @@ export class StudioScene extends Phaser.Scene {
   readonly touchInput = new TouchInput();
   private interactionSystem!: InteractionSystem;
   private interactionPrompt!: InteractionPrompt;
+  /** Furniture placement overlay — see game/world/furnitureEditor.ts. Always spawns its saved/default layout; editing itself stays dev-only (gated in GameCanvas.tsx). Never read by house/collision/camera/player code. */
+  furnitureEditor!: FurnitureEditor;
   private inputLocked = false;
   private wallSegments: WallSegment[] = [];
   private doorSegments: DoorSegment[] = [];
@@ -45,6 +49,8 @@ export class StudioScene extends Phaser.Scene {
 
   preload(): void {
     preloadFurnitureSprites(this);
+    const furnitureAssetFiles = this.registry.get(FURNITURE_ASSET_FILES_REGISTRY_KEY) as string[] | undefined;
+    preloadEditorFurnitureSprites(this, furnitureAssetFiles ?? []);
   }
 
   create(): void {
@@ -78,6 +84,9 @@ export class StudioScene extends Phaser.Scene {
     );
 
     this.input.keyboard?.on("keydown-ESC", this.handleEscape, this);
+
+    this.furnitureEditor = new FurnitureEditor(this);
+    this.furnitureEditor.load();
 
     this.game.events.emit(GAME_EVENTS.StudioReady, this);
   }
@@ -135,6 +144,7 @@ export class StudioScene extends Phaser.Scene {
     this.buildLevel();
     this.applyCameraFraming();
     this.player.reprojectVisual();
+    this.furnitureEditor.reprojectAll();
   }
 
   /** Recomputes camera bounds from the active projection's extent and reapplies zoom, so toggling mode, zooming, or resizing the window never crops the house. */

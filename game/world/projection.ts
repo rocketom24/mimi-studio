@@ -111,6 +111,25 @@ export function screenToWorldDelta(screenDx: number, screenDy: number): ScreenPo
   return { x: worldDx * scale, y: worldDy * scale };
 }
 
+/**
+ * Inverse of project() for a full point (not just a direction): given a
+ * screen-space coordinate (e.g. Phaser's pointer.worldX/worldY, which already
+ * accounts for camera scroll/zoom), recovers the logical world (x, y) that
+ * would project to it at z=0. Used by the furniture editor to turn a pointer
+ * position into a storable world coordinate.
+ */
+export function unproject(screenX: number, screenY: number): ScreenPoint {
+  if (cameraMode === "topdown") {
+    return {
+      x: (screenX - TOPDOWN_PADDING_PX) / TOPDOWN_SCALE,
+      y: (screenY - TOPDOWN_PADDING_PX) / TOPDOWN_SCALE,
+    };
+  }
+  const a = (screenX - LEFT_PADDING_PX) / ISO_X_SCALE;
+  const b = (screenY - TOP_PADDING_PX) / ISO_Y_SCALE;
+  return { x: (a + b) / 2, y: (b - a) / 2 };
+}
+
 /** Projected screen extent of the whole world, for camera bounds/zoom. */
 export function projectedSize(): { width: number; height: number } {
   if (cameraMode === "topdown") {

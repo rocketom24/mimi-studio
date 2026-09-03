@@ -2,8 +2,8 @@ import * as Phaser from "phaser";
 import { WALL_HEIGHT_PX } from "@/game/config/world";
 import { ARCH_PALETTE, lighten } from "@/game/world/palette";
 import { visualDepth } from "@/game/world/depth";
-import { getCameraMode, project } from "@/game/world/projection";
-import { computeDoorPlacements, drawBox, FRONT_WALL_SHADOW_ALPHA, WALL_THICKNESS_PX, type BoxFootprint, type DoorPlacement } from "@/game/world/wallSystem";
+import { project } from "@/game/world/projection";
+import { computeDoorPlacements, drawBox, WALL_THICKNESS_PX, type BoxFootprint, type DoorPlacement } from "@/game/world/wallSystem";
 import { ROOMS } from "@/game/world/rooms";
 
 const DOOR_COLOR = ARCH_PALETTE.door;
@@ -41,16 +41,14 @@ function doorCenter(p: DoorPlacement): { x: number; y: number } {
  * isometric and top-down (every point goes through project(), same as
  * drawBox's wall use).
  *
- * Depth and alpha are recomputed here every call, not just once at creation:
- * the leaf's footprint moves as it swings (up to a full `span` away from
- * `hinge`), so a depth fixed at creation-time drifts out of sync with Mimi's
- * own per-frame depth (see Player.update) and she reads as popping in front
- * of or behind an open door instead of passing it cleanly. Alpha fades a
- * front-wall door (see DoorPlacement.isBackWall) from FRONT_WALL_SHADOW_ALPHA
- * at closed — matching the translucent shadow the wall it's plugging renders
- * as (see wallSystem's drawWallShadow) — up to fully solid as it swings open
- * into visible room space; a back-wall door, whose wall is a solid 3D block,
- * stays solid throughout.
+ * Depth is recomputed here every call, not just once at creation: the leaf's
+ * footprint moves as it swings (up to a full `span` away from `hinge`), so a
+ * depth fixed at creation-time drifts out of sync with Mimi's own per-frame
+ * depth (see Player.update) and she reads as popping in front of or behind
+ * an open door instead of passing it cleanly. Always fully solid (unlike the
+ * translucent shadow the wall it's plugging renders as — see wallSystem's
+ * drawWallShadow) — a closed door reads as a real, solid plug in the
+ * doorway, not a see-through gap into the wall behind it.
  */
 function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness: number): void {
   g.clear();
@@ -74,8 +72,7 @@ function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness
   ];
 
   g.setDepth(visualDepth(Math.max(...footprint.map((c) => c.y))));
-  const fadeFrontWall = getCameraMode() === "isometric" && !p.isBackWall;
-  g.setAlpha(fadeFrontWall ? Phaser.Math.Linear(FRONT_WALL_SHADOW_ALPHA, 1, openness) : 1);
+  g.setAlpha(1);
 
   drawBox(g, footprint, DOOR_COLOR);
 

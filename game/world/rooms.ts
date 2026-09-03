@@ -105,7 +105,7 @@ export const ROOMS: RoomDef[] = [
     floorColor: 0xb9895e,
     floorType: "wood",
     doors: [],
-    windows: [{ x: px(17), y: px(0), w: px(3), h: TILE_SIZE - 2 }],
+    windows: [],
     furniture: [],
   },
   {
