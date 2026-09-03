@@ -271,12 +271,10 @@ const EXTRUSION_HEIGHT: Partial<Record<FurnitureKind, number>> = {
 };
 
 /**
- * Real-photo furniture kinds: rendered as a flat top-down-style PNG icon
- * (see public/furniture) instead of a procedural shape, anchored to its
- * floor point with a soft drop shadow. The same icon is used in both camera
- * modes — isometric just places it on the projected floor point rather than
- * reprojecting/shearing the image, a deliberate trade-off for realistic art
- * with no per-mode asset.
+ * Real-photo furniture kinds: rendered as a PNG icon (see public/furniture)
+ * instead of a procedural shape, anchored to its floor point with a soft
+ * drop shadow, placed on the projected floor point rather than
+ * reprojecting/shearing the image.
  */
 const SPRITE_PATH: Partial<Record<FurnitureKind, string>> = {
   catBed: "/furniture/catBed.png",
@@ -312,7 +310,11 @@ function drawSpriteShadow(g: Phaser.GameObjects.Graphics, anchor: { x: number; y
   g.fillEllipse(anchor.x, anchor.y - 1, w * 0.8, Math.max(2, w * 0.22));
 }
 
-/** A sprite-backed piece: drop shadow + the real PNG icon, anchored bottom-center at the footprint's floor point and scaled to SPRITE_DISPLAY_WIDTH keeping its natural aspect ratio. */
+/**
+ * A sprite-backed piece: drop shadow + the real PNG icon, anchored
+ * bottom-center at the footprint's floor point, at the PNG's own (isometric)
+ * aspect ratio, scaled to SPRITE_DISPLAY_WIDTH.
+ */
 function createSpritePiece(
   scene: Phaser.Scene,
   worldX: number,
@@ -331,7 +333,8 @@ function createSpritePiece(
   const naturalW = image.width || 1;
   const naturalH = image.height || 1;
   const displayWidth = SPRITE_DISPLAY_WIDTH[kind] ?? w;
-  image.setDisplaySize(displayWidth, displayWidth * (naturalH / naturalW));
+  const displayHeight = displayWidth * (naturalH / naturalW);
+  image.setDisplaySize(displayWidth, displayHeight);
 
   return [shadow, image];
 }
@@ -369,6 +372,7 @@ export function createFurniture(scene: Phaser.Scene, room: RoomDef): Phaser.Game
       continue;
     }
 
+    const draw = piece.kind ? DRAW_BY_KIND[piece.kind] : undefined;
     const flush = piece.kind ? FLUSH_KINDS.has(piece.kind) : false;
     const heightPx = piece.kind ? (EXTRUSION_HEIGHT[piece.kind] ?? 3) : 3;
 
@@ -384,7 +388,6 @@ export function createFurniture(scene: Phaser.Scene, room: RoomDef): Phaser.Game
     drawRiser(g, riserTop, w, heightPx, piece.color);
 
     const iconRect: Rect = { x: riserTop.x, y: riserTop.y - h, w, h };
-    const draw = piece.kind ? DRAW_BY_KIND[piece.kind] : undefined;
     if (draw) draw(g, iconRect, piece.color);
     else box(g, iconRect, piece.color);
 

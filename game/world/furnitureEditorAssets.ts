@@ -22,6 +22,14 @@ export function editorTextureKey(stem: string): string {
   return `furniture-editor-${stem}`;
 }
 
+/** Strips a "-removebg-preview" export suffix and a trailing " (1)"-style duplicate-file suffix, so both map to the same catalog entry as the plain name. Shared by furnitureEditor.ts (sizing) and furnitureTopdownIcons.ts (icon lookup) so a kind resolves to the same catalog key everywhere. */
+export function canonicalKind(kind: string): string {
+  return kind
+    .replace(/\s*\(\d+\)$/, "")
+    .replace(/-removebg-preview$/i, "")
+    .toLowerCase();
+}
+
 /** Loads every discovered furniture PNG under its own editor texture key. Call once from the scene's preload(). */
 export function preloadEditorFurnitureSprites(scene: Phaser.Scene, filenames: readonly string[]): void {
   for (const filename of filenames) {

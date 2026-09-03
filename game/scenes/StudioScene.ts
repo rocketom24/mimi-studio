@@ -1,6 +1,6 @@
 import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
-import { projectedSize, toggleCameraMode } from "@/game/world/projection";
+import { projectedSize } from "@/game/world/projection";
 import { ROOMS } from "@/game/world/rooms";
 import { createHouseFloor } from "@/game/world/floorSystem";
 import { createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
@@ -39,7 +39,7 @@ export class StudioScene extends Phaser.Scene {
   private inputLocked = false;
   private wallSegments: WallSegment[] = [];
   private doorSegments: DoorSegment[] = [];
-  /** Every static level Graphics/Text object, so a camera-mode toggle can destroy and redraw them under the new projection instead of leaking the old ones. */
+  /** Every static level Graphics/Text object built by buildLevel(). */
   private levelObjects: Phaser.GameObjects.GameObject[] = [];
   private zoomFactor = 1;
 
@@ -69,7 +69,6 @@ export class StudioScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
     this.cameras.main.setDeadzone(48, 28);
 
-    this.input.keyboard?.on("keydown-Q", this.toggleCamera, this);
     this.input.keyboard?.on("keydown", this.handleZoomKey, this);
     this.input.on("wheel", this.handleWheelZoom, this);
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleGameResize, this);
@@ -111,13 +110,7 @@ export class StudioScene extends Phaser.Scene {
     this.interactionSystem.interact();
   }
 
-  /**
-   * Builds the house's static geometry. Called once up front, and again on
-   * every camera-mode toggle: every drawable derives its screen position by
-   * calling project(), so redrawing after toggleCameraMode() is the only
-   * way to move it to the new projection — the room/wall/door data these
-   * calls read from (ROOMS, buildWallGrid) is identical either way.
-   */
+  /** Builds the house's static geometry, once up front. */
   private buildLevel(): void {
     for (const segment of this.doorSegments) segment.tween?.stop();
     for (const obj of this.levelObjects) obj.destroy();
@@ -136,15 +129,6 @@ export class StudioScene extends Phaser.Scene {
     for (const room of ROOMS) {
       this.levelObjects.push(...createFurniture(this, room));
     }
-  }
-
-  /** Q: swap the fixed camera projection (isometric <-> top-down) and redraw the level under it. Never rotates the house — see buildLevel(). */
-  private toggleCamera(): void {
-    toggleCameraMode();
-    this.buildLevel();
-    this.applyCameraFraming();
-    this.player.reprojectVisual();
-    this.furnitureEditor.reprojectAll();
   }
 
   /** Recomputes camera bounds from the active projection's extent and reapplies zoom, so toggling mode, zooming, or resizing the window never crops the house. */

@@ -3,7 +3,7 @@ import { TILE_SIZE, WALL_COLOR, WALL_HEIGHT_PX, WORLD_TILE_HEIGHT, WORLD_TILE_WI
 import { ROOMS } from "@/game/world/rooms";
 import { ARCH_PALETTE, darken, lighten } from "@/game/world/palette";
 import { DEPTH, visualDepth } from "@/game/world/depth";
-import { getCameraMode, project } from "@/game/world/projection";
+import { project } from "@/game/world/projection";
 import { mergeVerticalRuns } from "@/game/world/gridRects";
 import type { DoorGap, PixelRect, RoomDef } from "@/game/types/world";
 
@@ -546,22 +546,6 @@ function isSolidTile(grid: boolean[][], tx: number, ty: number): boolean {
 }
 
 /**
- * Top-down wall rendering: flat fill of the thinned run rect (see
- * buildWallRuns), no bevel/shadow — a true floor-plan look, straight down
- * with no directional lighting cues.
- */
-function drawWallRunTopDown(g: Phaser.GameObjects.Graphics, run: WallRun): void {
-  const rect = run.thin;
-  const nw = project(rect.x, rect.y);
-  const ne = project(rect.x + rect.w, rect.y);
-  const se = project(rect.x + rect.w, rect.y + rect.h);
-  const sw = project(rect.x, rect.y + rect.h);
-
-  g.fillStyle(WALL_COLOR, 1);
-  g.fillPoints([nw, ne, se, sw], true);
-}
-
-/**
  * Flat shadow cast for an invisible "front" wall in isometric — same
  * footprint rect as the real wall (see createWalls's isBackWall split),
  * flush with the floor instead of the full 3D block. Mimi still collides
@@ -590,10 +574,8 @@ function drawWallShadow(g: Phaser.GameObjects.Graphics, rect: PixelRect, opts: {
 export const FRONT_WALL_SHADOW_ALPHA = 0.45;
 
 /**
- * Renders every wall run. Top-down draws every run as a flat band
- * (drawWallRunTopDown) — a true floor-plan look, nothing needs hiding to
- * stay readable there. Isometric only draws the house's back walls (north
- * row, west column — see buildWallRuns' isBackWall) as full solid 3D blocks
+ * Renders every wall run. Only draws the house's back walls (north row,
+ * west column — see buildWallRuns' isBackWall) as full solid 3D blocks
  * (drawWallBlock); every other wall (south/east exterior border, every
  * interior divider) draws as a flat translucent shadow (drawWallShadow)
  * instead — invisible enough to keep the elevated dollhouse view open, but
@@ -618,7 +600,6 @@ function splitIntoRowBands(rect: PixelRect): PixelRect[] {
 const BAND_FILL_OVERLAP_PX = 1;
 
 export function createWalls(scene: Phaser.Scene): WallSegment[] {
-  const isTopdown = getCameraMode() === "topdown";
   const grid = buildWallGrid();
   const visualGrid = grid.map((row) => row.slice());
   for (const edge of openExteriorEdges()) {
@@ -631,12 +612,6 @@ export function createWalls(scene: Phaser.Scene): WallSegment[] {
   const segments: WallSegment[] = [];
   for (const run of runs) {
     const rect = run.thin;
-    if (isTopdown) {
-      const g = scene.add.graphics().setDepth(run.isBackWall ? DEPTH.DYNAMIC_BASE : visualDepth(rect.y + rect.h));
-      drawWallRunTopDown(g, run);
-      segments.push({ rect, graphics: g });
-      continue;
-    }
     if (run.isBackWall) {
       // Back-wall runs (north row / west column) can span the full house
       // height/width in one merged rect (see gridToRects' vertical-run
@@ -686,7 +661,6 @@ const WINDOW_SILL_PX = 2;
 /** Decorative window: frame, glass, center mullion, sill ledge, subtle highlight — sized to the thin wall band. Never collides. Skipped when its wall row is cut away (front/open-side walls), so no window floats in front of nothing. Returns null when the room has none or none are visible. */
 export function createWindows(scene: Phaser.Scene, room: RoomDef): Phaser.GameObjects.Graphics | null {
   if (!room.windows?.length) return null;
-  const isTopdown = getCameraMode() === "topdown";
   const g = scene.add.graphics().setDepth(DEPTH.LABEL_BASE);
   let drewAny = false;
 
@@ -694,8 +668,7 @@ export function createWindows(scene: Phaser.Scene, room: RoomDef): Phaser.GameOb
     const wallRow = Math.round(win.y / TILE_SIZE);
     if (wallRow === WORLD_TILE_HEIGHT - 1) continue; // south border row is never drawn — its window shouldn't be either
     drewAny = true;
-    if (isTopdown) drawWindowTopDown(g, win);
-    else drawWindowIsometric(g, win);
+    drawWindowIsometric(g, win);
   }
 
   if (!drewAny) {
@@ -703,33 +676,6 @@ export function createWindows(scene: Phaser.Scene, room: RoomDef): Phaser.GameOb
     return null;
   }
   return g;
-}
-
-/** Flat floor-plan window: a glazed gap in the wall band, seen straight down. */
-function drawWindowTopDown(g: Phaser.GameObjects.Graphics, win: PixelRect): void {
-  const bandY = win.y + WALL_THICKNESS_PAD_PX;
-  const anchor = project(win.x, bandY);
-  const h = WALL_THICKNESS_PX;
-
-  g.fillStyle(ARCH_PALETTE.windowFrame, 1);
-  g.fillRect(anchor.x, anchor.y, win.w, h);
-
-  const glassX = anchor.x + 1;
-  const glassY = anchor.y + 1;
-  const glassW = win.w - 2;
-  const glassH = Math.max(1, h - 2);
-  g.fillStyle(ARCH_PALETTE.windowGlass, 0.75);
-  g.fillRect(glassX, glassY, glassW, glassH);
-
-  g.fillStyle(lighten(ARCH_PALETTE.windowGlass, 40), 0.6);
-  g.fillRect(glassX, glassY, glassW, 1);
-
-  g.fillStyle(ARCH_PALETTE.windowFrame, 1);
-  g.fillRect(anchor.x + Math.floor(win.w / 2), anchor.y, 1, h);
-
-  // Sill: a short ledge below the frame reads as the window sitting in wall depth.
-  g.fillStyle(darken(ARCH_PALETTE.windowFrame, 15), 1);
-  g.fillRect(anchor.x - 1, anchor.y + h, win.w + 2, WINDOW_SILL_PX);
 }
 
 // How high off the floor the glazed opening starts/ends, within WALL_HEIGHT_PX —

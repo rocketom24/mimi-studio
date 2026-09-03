@@ -1,7 +1,7 @@
 import * as Phaser from "phaser";
 import { project, unproject } from "@/game/world/projection";
 import { visualDepth } from "@/game/world/depth";
-import { editorTextureKey } from "@/game/world/furnitureEditorAssets";
+import { canonicalKind, editorTextureKey } from "@/game/world/furnitureEditorAssets";
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import { WALL_THICKNESS_PAD_PX } from "@/game/world/wallSystem";
@@ -27,7 +27,7 @@ const STORAGE_KEY = "mimi-studio:furnitureEditor:v1";
  */
 const DEFAULT_ITEMS: FurnitureEditorItem[] = [
   { id: "sofa-removebg-preview-1788435297019-407587", kind: "sofa-removebg-preview", x: 102.14768981180916, y: 143.58179222894825, rotation: 0, scale: 1 },
-  { id: "tv-removebg-preview-1788435302309-827849", kind: "tv-removebg-preview", x: 57.768225882188844, y: 146.42777174513265, rotation: 0, scale: 1.3000000000000003 },
+  { id: "tv-removebg-preview-1788435302309-827849", kind: "tv-removebg-preview", x: 57.768225882188844, y: 146.42777174513265, rotation: 0, scale: 1.8 },
   { id: "bed-removebg-preview-1788435313131-81672", kind: "bed-removebg-preview", x: 336.52330987017353, y: 233.6030140210895, rotation: 0, scale: 1 },
   { id: "pc-1788435327182-565160", kind: "pc", x: 326.2045364150044, y: 45.062079629544655, rotation: 0, scale: 1 },
   { id: "chair-1788435337352-491020", kind: "chair", x: 360.31602181570827, y: 35.17984357222838, rotation: 0, scale: 1 },
@@ -109,14 +109,6 @@ const BASE_WIDTH_TILES: Record<string, number> = {
   catlitterbox: 1.6,
 };
 
-/** Strips a "-removebg-preview" export suffix and a trailing " (1)"-style duplicate-file suffix, so both map to the same catalog entry as the plain name. */
-function canonicalKind(kind: string): string {
-  return kind
-    .replace(/\s*\(\d+\)$/, "")
-    .replace(/-removebg-preview$/i, "")
-    .toLowerCase();
-}
-
 function baseDisplayWidth(kind: string): number {
   const tiles = BASE_WIDTH_TILES[canonicalKind(kind)] ?? DEFAULT_DISPLAY_WIDTH_TILES;
   return tiles * TILE_SIZE;
@@ -141,6 +133,18 @@ function originYFor(kind: string): number {
   return ORIGIN_Y_BY_KIND[canonicalKind(kind)] ?? 1;
 }
 
+/** The floor rect (world px) of whichever room contains (x, y), or undefined if it falls in no room (a gap/hallway mid-drag). */
+function roomBoundsAt(x: number, y: number): { x0: number; y0: number; x1: number; y1: number } | undefined {
+  for (const room of ROOMS) {
+    const x0 = room.tiles.x * TILE_SIZE;
+    const y0 = room.tiles.y * TILE_SIZE;
+    const x1 = x0 + room.tiles.w * TILE_SIZE;
+    const y1 = y0 + room.tiles.h * TILE_SIZE;
+    if (x >= x0 && x <= x1 && y >= y0 && y <= y1) return { x0, y0, x1, y1 };
+  }
+  return undefined;
+}
+
 /**
  * Clamps a world-space point to the interior floor of whichever room it
  * falls in, inset by WALL_THICKNESS_PAD_PX (the same inset the walls
@@ -155,16 +159,9 @@ function originYFor(kind: string): number {
  */
 function clampToRoomFloor(x: number, y: number): { x: number; y: number } {
   const pad = WALL_THICKNESS_PAD_PX;
-  for (const room of ROOMS) {
-    const x0 = room.tiles.x * TILE_SIZE;
-    const y0 = room.tiles.y * TILE_SIZE;
-    const x1 = x0 + room.tiles.w * TILE_SIZE;
-    const y1 = y0 + room.tiles.h * TILE_SIZE;
-    if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
-      return { x: Phaser.Math.Clamp(x, x0 + pad, x1 - pad), y: Phaser.Math.Clamp(y, y0 + pad, y1 - pad) };
-    }
-  }
-  return { x, y };
+  const bounds = roomBoundsAt(x, y);
+  if (!bounds) return { x, y };
+  return { x: Phaser.Math.Clamp(x, bounds.x0 + pad, bounds.x1 - pad), y: Phaser.Math.Clamp(y, bounds.y0 + pad, bounds.y1 - pad) };
 }
 
 interface PlacedItem extends FurnitureEditorItem {
@@ -221,7 +218,7 @@ export class FurnitureEditor {
     this.cancelPlacement();
     this.pendingKind = kind;
     this.ghost = this.scene.add.image(0, 0, editorTextureKey(kind)).setOrigin(0.5, originYFor(kind)).setAlpha(0.6).setDepth(4000);
-    this.applyBaseSize(this.ghost, kind, 1);
+    this.applyScale(this.ghost, kind, 1);
   }
 
   /** Reads every item back out of localStorage (falling back to the baked-in DEFAULT_ITEMS when there's no save yet) and spawns it. Call once at scene boot. */
@@ -268,18 +265,10 @@ export class FurnitureEditor {
     }
   }
 
-  /** Re-derives every item's screen position from its stored world (x, y) — call after a camera-mode toggle, same as Player.reprojectVisual(). */
-  reprojectAll(): void {
-    for (const item of this.items.values()) {
-      const anchor = project(item.x, item.y);
-      item.image.setPosition(anchor.x, anchor.y);
-    }
-  }
-
   private spawn(data: FurnitureEditorItem): void {
     const anchor = project(data.x, data.y);
     const image = this.scene.add.image(anchor.x, anchor.y, editorTextureKey(data.kind)).setOrigin(0.5, originYFor(data.kind));
-    const baseScale = this.applyBaseSize(image, data.kind, data.scale);
+    const baseScale = this.applyScale(image, data.kind, data.scale);
     image.setAngle(data.rotation);
     image.setDepth(visualDepth(data.y));
     image.setInteractive({ draggable: true, useHandCursor: true });
@@ -290,11 +279,19 @@ export class FurnitureEditor {
     image.on("pointerdown", () => this.select(item.id));
   }
 
-  /** Sets the image's display size to `kind`'s realistic baseline width scaled by `itemScale`, returning the scale factor that produced it. */
-  private applyBaseSize(image: Phaser.GameObjects.Image, kind: string, itemScale: number): number {
+  /**
+   * Sets the image's display size to `kind`'s realistic baseline width
+   * scaled by `itemScale`, returning the scale factor that produced it
+   * (the width-axis scale — same meaning `applyBaseSize` used to return,
+   * still what handleWheel scales up/down). Scales both axes uniformly, so
+   * the PNG keeps its own drawn (isometric) proportions, never squashed to a
+   * fake floor-plan aspect.
+   */
+  private applyScale(image: Phaser.GameObjects.Image, kind: string, itemScale: number): number {
     const naturalW = image.width || 1;
     const baseScale = baseDisplayWidth(kind) / naturalW;
-    image.setScale(baseScale * itemScale);
+    const scale = baseScale * itemScale;
+    image.setScale(scale, scale);
     return baseScale;
   }
 
@@ -348,7 +345,7 @@ export class FurnitureEditor {
     const item = this.items.get(this.selectedId);
     if (!item || !currentlyOver.includes(item.image)) return;
     item.scale = Phaser.Math.Clamp(item.scale - Math.sign(deltaY) * SCALE_STEP, SCALE_MIN, SCALE_MAX);
-    item.image.setScale(item.baseScale * item.scale);
+    this.applyScale(item.image, item.kind, item.scale);
   }
 
   private handleRotateKey(): void {
