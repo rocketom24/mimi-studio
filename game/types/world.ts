@@ -63,7 +63,7 @@ export interface PixelRect {
   h: number;
 }
 
-export type FloorType = "wood" | "tile" | "workshop";
+export type FloorType = "wood" | "tile" | "workshop" | "grass";
 
 export interface RoomDef {
   id: string;

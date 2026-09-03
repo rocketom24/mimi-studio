@@ -7,9 +7,11 @@ const px = (tiles: number) => tiles * TILE_SIZE;
 /**
  * Single-floor house rebuilt off the reference dollhouse image at a fixed
  * single camera angle (no rotation). Left column: Living Room over Cat
- * Room + Entrance. Right column: Bedroom + Study spans the full height —
- * former Kitchen/Bedroom-Study split is now one continuous room (kitchen
- * furniture deferred).
+ * Room + Entrance. Right column: Bedroom + Study on top — former Kitchen/
+ * Bedroom-Study split is now one continuous room (kitchen furniture
+ * deferred) — with Garden filling its freed bottom ~30% below. Garden is
+ * grass-floored only for now (no doors/furniture yet, no interior
+ * connection to the house), planted properly later.
  *
  * Adjacent rooms keep exactly one empty tile of gap between their
  * footprints so both rooms' walls land on the same tile — one declared
@@ -96,15 +98,26 @@ export const ROOMS: RoomDef[] = [
   {
     id: "bedroom-study",
     label: "BEDROOM + STUDY",
-    // Spans the full right-column height (was split into a separate Kitchen
-    // room on top + Bedroom-Study below, with a dividing wall between them —
-    // now one continuous room; the old dividing wall disappears on its own
-    // since walls are generated purely from room footprints, not declared).
-    tiles: { x: 15, y: 1, w: 8, h: 19 },
+    // Shortened from the full right-column height (was h:19) — the freed
+    // bottom ~30% is now the "garden" room below, with the usual 1-tile
+    // gap (world row 14) between them.
+    tiles: { x: 15, y: 1, w: 8, h: 13 },
     floorColor: 0xb9895e,
     floorType: "wood",
     doors: [],
     windows: [{ x: px(17), y: px(0), w: px(3), h: TILE_SIZE - 2 }],
+    furniture: [],
+  },
+  {
+    id: "garden",
+    label: "GARDEN",
+    // Placeholder outdoor plot freed up by shrinking Bedroom + Study —
+    // grass floor only for now (no furniture/doors yet), planted properly
+    // later.
+    tiles: { x: 15, y: 15, w: 8, h: 5 },
+    floorColor: 0x7cb342,
+    floorType: "grass",
+    doors: [],
     furniture: [],
   },
 ];

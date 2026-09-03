@@ -5,7 +5,7 @@ import { DEPTH } from "@/game/world/depth";
 import { project } from "@/game/world/projection";
 import { ROOMS } from "@/game/world/rooms";
 import { mergeVerticalRuns } from "@/game/world/gridRects";
-import { clampToHouseBorder } from "@/game/world/wallSystem";
+import { buildWallGrid, clampToHouseBorder, openExteriorEdges } from "@/game/world/wallSystem";
 import type { PixelRect, RoomDef } from "@/game/types/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
@@ -52,6 +52,56 @@ function drawWorkshopPattern(g: Phaser.GameObjects.Graphics, x: number, y: numbe
   for (let ty = y + step; ty < y + h; ty += step) {
     const a = project(x, ty);
     const b = project(x + w, ty);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+}
+
+/** Outdoor garden floor: sparse light blade flecks. Its outer (world-edge) sides get a dedicated fence-colored border — see drawGardenEdgeBorder — instead of a stroke here, so the edge shared with the house isn't double-lined. */
+function drawGrassPattern(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, base: number): void {
+  g.fillStyle(lighten(base, 14), 0.5);
+  for (let ty = y + TILE_SIZE / 2; ty < y + h; ty += TILE_SIZE) {
+    for (let tx = x + TILE_SIZE / 2; tx < x + w; tx += TILE_SIZE) {
+      const p = project(tx, ty);
+      g.fillRect(p.x - 1, p.y - 1, 2, 2);
+    }
+  }
+}
+
+/**
+ * A grass room's own south/east edges double as the house's south border row
+ * (never drawn — see wallSystem's "open-front dollhouse" comment) or a plain
+ * translucent front-wall shadow — both read as the garden floor just running
+ * out into nothing. Whichever of its 4 sides actually sit on the world's
+ * outer edge get an explicit fence-colored line instead, so the garden
+ * reads as bounded outdoor space rather than a house wall.
+ */
+function drawGardenEdgeBorder(g: Phaser.GameObjects.Graphics, room: RoomDef): void {
+  const { x: tx, y: ty, w: tw, h: th } = room.tiles;
+  const x = px(tx);
+  const y = px(ty);
+  const w = px(tw);
+  const h = px(th);
+  const color = darken(room.floorColor, 40);
+
+  g.lineStyle(4, color, 1);
+  if (ty + th === WORLD_TILE_HEIGHT - 1) {
+    const a = project(x, y + h);
+    const b = project(x + w, y + h);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+  if (tx + tw === WORLD_TILE_WIDTH - 1) {
+    const a = project(x + w, y);
+    const b = project(x + w, y + h);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+  if (ty === 0) {
+    const a = project(x, y);
+    const b = project(x + w, y);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+  if (tx === 0) {
+    const a = project(x, y);
+    const b = project(x, y + h);
     g.lineBetween(a.x, a.y, b.x, b.y);
   }
 }
@@ -130,6 +180,113 @@ function ownerGridToRects(owner: number[][]): Array<{ roomIndex: number; rect: P
   return mergeVerticalRuns(rowRuns).map(({ key, rect }) => ({ roomIndex: Number(key), rect }));
 }
 
+/**
+ * Aligns a merged owner rect's edges to the true wall centerline wherever an
+ * interior dividing wall separates it from a differently-owned neighbor —
+ * e.g. the 1-tile gap row between Bedroom+Study and Garden, flood-filled
+ * entirely to one side by assignFloorOwners (see its own doc comment).
+ *
+ * A wall's own drawn band sits centered in its gap tile (see
+ * WALL_THICKNESS_PAD_PX / thinRect in wallSystem.ts) — pad in from each of
+ * the tile's two faces, i.e. exactly straddling the tile's midline. So each
+ * neighboring room's floor has to reach exactly that midline, not stop pad
+ * short of its own face: the owning side (the one flood-fill actually
+ * assigned the gap tile to) currently runs the tile's *full* TILE_SIZE past
+ * its real boundary and must pull back by half a tile; the other side never
+ * got the gap tile at all and must push out by half a tile to meet it.
+ * Anything less (e.g. only pad) leaves a sliver — neither floor color nor
+ * wall — showing raw background between them.
+ *
+ * World-outer-border edges are left alone (clampToHouseBorder/reopenEdges
+ * handle those — there's no room on the far side to meet in the middle of).
+ * An edge with any open tile along it (a doorway) is left alone too — real
+ * doorway floor must stay continuous, and both branches below only ever
+ * fire where the whole checked span is solid wall.
+ */
+function alignToWallCenterline(rect: PixelRect, wallGrid: boolean[][]): PixelRect {
+  const half = TILE_SIZE / 2;
+  const tx0 = rect.x / TILE_SIZE;
+  const ty0 = rect.y / TILE_SIZE;
+  const tx1 = (rect.x + rect.w) / TILE_SIZE;
+  const ty1 = (rect.y + rect.h) / TILE_SIZE;
+
+  const rowSolid = (ty: number) => {
+    for (let tx = tx0; tx < tx1; tx++) if (!wallGrid[ty][tx]) return false;
+    return true;
+  };
+  const colSolid = (tx: number) => {
+    for (let ty = ty0; ty < ty1; ty++) if (!wallGrid[ty][tx]) return false;
+    return true;
+  };
+
+  let { x, y, w, h } = rect;
+  // North: ty0 itself solid -> this rect owns the gap row, pull back to its
+  // centerline. Otherwise, if the row just above is solid and NOT owned by
+  // this rect, that's the neighbor's gap row — push out to meet it there.
+  if (ty0 > 0) {
+    if (rowSolid(ty0)) {
+      y += half;
+      h -= half;
+    } else if (ty0 - 1 > 0 && rowSolid(ty0 - 1)) {
+      y -= half;
+      h += half;
+    }
+  }
+  // South: mirror of north.
+  if (ty1 < WORLD_TILE_HEIGHT) {
+    if (rowSolid(ty1 - 1)) {
+      h -= half;
+    } else if (ty1 < WORLD_TILE_HEIGHT - 1 && rowSolid(ty1)) {
+      h += half;
+    }
+  }
+  // West: mirror of north, on the x axis.
+  if (tx0 > 0) {
+    if (colSolid(tx0)) {
+      x += half;
+      w -= half;
+    } else if (tx0 - 1 > 0 && colSolid(tx0 - 1)) {
+      x -= half;
+      w += half;
+    }
+  }
+  // East: mirror of south, on the x axis.
+  if (tx1 < WORLD_TILE_WIDTH) {
+    if (colSolid(tx1 - 1)) {
+      w -= half;
+    } else if (tx1 < WORLD_TILE_WIDTH - 1 && colSolid(tx1)) {
+      w += half;
+    }
+  }
+  return { x, y, w, h };
+}
+
+/**
+ * clampToHouseBorder insets every outer edge by the wall pad, on the
+ * assumption a wall sits there to hide the inset gap. openExteriorEdges()
+ * segments (e.g. Garden's south/east) draw no wall, so that assumption is
+ * false there — push the clamped edge back out to the true world edge on
+ * exactly those segments, using the pre-clamp `raw` rect's own tile bounds
+ * to tell which edges qualify.
+ */
+function reopenEdges(raw: PixelRect, clamped: PixelRect): PixelRect {
+  let { x, y, w, h } = clamped;
+  const tx0 = raw.x / TILE_SIZE;
+  const ty0 = raw.y / TILE_SIZE;
+  const tx1 = (raw.x + raw.w) / TILE_SIZE;
+  const ty1 = (raw.y + raw.h) / TILE_SIZE;
+
+  for (const edge of openExteriorEdges()) {
+    if (edge.axis === "row" && ty1 - 1 === edge.index && tx0 < edge.end && tx1 > edge.start) {
+      h = px(edge.index + 1) - y;
+    }
+    if (edge.axis === "col" && tx1 - 1 === edge.index && ty0 < edge.end && ty1 > edge.start) {
+      w = px(edge.index + 1) - x;
+    }
+  }
+  return { x, y, w, h };
+}
+
 /** Draws one merged floor rect: fill, then the room's plank/grout/slab pattern within that rect's own bounds. */
 function drawFloorRect(g: Phaser.GameObjects.Graphics, rect: PixelRect, room: RoomDef): void {
   g.fillStyle(room.floorColor, 1);
@@ -137,6 +294,7 @@ function drawFloorRect(g: Phaser.GameObjects.Graphics, rect: PixelRect, room: Ro
 
   if (room.floorType === "wood") drawWoodPattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
   else if (room.floorType === "tile") drawTilePattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
+  else if (room.floorType === "grass") drawGrassPattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
   else drawWorkshopPattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
 }
 
@@ -158,9 +316,11 @@ function drawFloorRect(g: Phaser.GameObjects.Graphics, rect: PixelRect, room: Ro
  */
 export function createHouseFloor(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
   const g = scene.add.graphics().setDepth(DEPTH.FLOOR);
+  const wallGrid = buildWallGrid();
 
   for (const { roomIndex, rect } of ownerGridToRects(assignFloorOwners())) {
-    const clipped = clampToHouseBorder(rect);
+    const neighborClipped = alignToWallCenterline(rect, wallGrid);
+    const clipped = reopenEdges(rect, clampToHouseBorder(neighborClipped));
     if (clipped.w <= 0 || clipped.h <= 0) continue;
     drawFloorRect(g, clipped, ROOMS[roomIndex]);
   }
@@ -171,6 +331,10 @@ export function createHouseFloor(scene: Phaser.Scene): Phaser.GameObjects.Graphi
     const w = px(room.tiles.w);
     g.fillStyle(0x000000, 0.16);
     g.fillPoints([project(x, y), project(x + w, y), project(x + w, y + 2), project(x, y + 2)], true);
+  }
+
+  for (const room of ROOMS) {
+    if (room.floorType === "grass") drawGardenEdgeBorder(g, room);
   }
 
   return g;

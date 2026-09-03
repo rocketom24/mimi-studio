@@ -153,10 +153,9 @@ export function computeDoorPlacements(rooms: RoomDef[]): DoorPlacement[] {
  * partition draws exactly one block per joint; thinRect's end-pad (below) is
  * what closes the seam between adjacent exclusive rects instead.
  */
-function gridToRects(grid: boolean[][], excludeRow?: number): PixelRect[] {
+function gridToRects(grid: boolean[][]): PixelRect[] {
   const rowRuns: PixelRect[] = [];
   for (let ty = 0; ty < grid.length; ty++) {
-    if (ty === excludeRow) continue;
     const row = grid[ty];
     let runStart = -1;
     for (let tx = 0; tx <= row.length; tx++) {
@@ -215,9 +214,9 @@ export function clampToHouseBorder(rect: PixelRect): PixelRect {
  * the open gap next to it. clampToHouseBorder then keeps whatever's left at
  * the house's own outer edge instead of the raw tile grid's.
  */
-function thinRect(rect: PixelRect, padStart: boolean, padEnd: boolean): PixelRect {
+function thinRect(rect: PixelRect, orientation: WallOrientation, padStart: boolean, padEnd: boolean): PixelRect {
   const pad = WALL_THICKNESS_PAD_PX;
-  if (classifyRun(rect) === "horizontal") {
+  if (orientation === "horizontal") {
     const x = rect.x - (padStart ? pad : 0);
     const w = rect.w + (padStart ? pad : 0) + (padEnd ? pad : 0);
     return clampToHouseBorder({ x, y: rect.y + pad, w, h: WALL_THICKNESS_PX });
@@ -245,19 +244,28 @@ function makeWallRun(grid: boolean[][], rect: PixelRect, forceBackWall?: boolean
   const tx = rect.x / TILE_SIZE;
   const ty = rect.y / TILE_SIZE;
   const tileLen = orientation === "horizontal" ? rect.w / TILE_SIZE : rect.h / TILE_SIZE;
-  // Only pad an end toward a tile that's actually another wall run — a
-  // door/archway gap or the world edge has nothing there to meet (see
-  // thinRect).
+  // Only pad an end toward a tile that's actually another DRAWN wall run —
+  // a door/archway gap or the world edge has nothing there to meet (see
+  // thinRect), and neither does an openExteriorEdges() segment: it's still
+  // solid in the collision grid, but nothing gets drawn there, so padding
+  // toward it would leave a dangling stub with nothing to butt against.
   const padStart = orientation === "horizontal" ? isSolidTile(grid, tx - 1, ty) : isSolidTile(grid, tx, ty - 1);
   const padEnd =
     orientation === "horizontal" ? isSolidTile(grid, tx + tileLen, ty) : isSolidTile(grid, tx, ty + tileLen);
   const isBackWall = forceBackWall ?? (orientation === "horizontal" ? ty === 0 : tx === 0);
-  return { thin: thinRect(rect, padStart, padEnd), orientation, isBackWall };
+  return { thin: thinRect(rect, orientation, padStart, padEnd), orientation, isBackWall };
 }
 
-function buildWallRuns(grid: boolean[][], excludeRow?: number): WallRun[] {
+/**
+ * `visualGrid` (defaults to `grid`) is what actually gets turned into drawn
+ * rects, and is also `grid`'s padding reference (see makeWallRun) — a
+ * segment hidden from `visualGrid` (see openExteriorEdges) draws nothing,
+ * so its still-solid-for-collision neighbors in `grid` correctly stop
+ * padding toward it too.
+ */
+function buildWallRuns(grid: boolean[][], visualGrid: boolean[][] = grid): WallRun[] {
   const runs: WallRun[] = [];
-  for (const rect of gridToRects(grid, excludeRow)) {
+  for (const rect of gridToRects(visualGrid)) {
     // A row-scan run that starts at the west border but isn't the north
     // border itself (ty !== 0) is an interior/south divider that happens to
     // touch the back wall's own column — e.g. the Living Room/Cat Room
@@ -268,11 +276,63 @@ function buildWallRuns(grid: boolean[][], excludeRow?: number): WallRun[] {
     // against the solid back-wall column above/below it. Carving the corner
     // tile off as its own forced-back-wall run reunites it with that column.
     if (classifyRun(rect) === "horizontal" && rect.x === 0 && rect.y !== 0 && rect.w > TILE_SIZE) {
-      runs.push(makeWallRun(grid, { x: 0, y: rect.y, w: TILE_SIZE, h: rect.h }, true));
-      runs.push(makeWallRun(grid, { x: TILE_SIZE, y: rect.y, w: rect.w - TILE_SIZE, h: rect.h }));
+      runs.push(makeWallRun(visualGrid, { x: 0, y: rect.y, w: TILE_SIZE, h: rect.h }, true));
+      runs.push(makeWallRun(visualGrid, { x: TILE_SIZE, y: rect.y, w: rect.w - TILE_SIZE, h: rect.h }));
       continue;
     }
-    runs.push(makeWallRun(grid, rect));
+    // A run's own west-start tile can likewise be the corner an INTERIOR
+    // perpendicular wall passes through, not just the world's own west
+    // border above — e.g. the Bedroom+Study/Garden divider (row 14)
+    // starting exactly at the long col-14 corridor wall it meets. Same
+    // cause as the x===0 case: gridToRects' row-scan claims that corner
+    // tile for this horizontal run instead of the vertical wall running
+    // through it. Left un-split, that corner tile draws as a horizontal
+    // nub at the raw tile edge — sticking out from the joint instead of
+    // sitting in it.
+    //
+    // Unlike the x===0 case, though, this tile can't just become its own
+    // thinned run (vertical or otherwise): the vertical wall on both sides
+    // of it (e.g. rows1-13 above, Garden's own west wall below) already
+    // pads into this exact tile to meet each other there, so a second,
+    // independently-padded run over the same tile would only double that
+    // padding into a visible overlap — and even sized to fit exactly, a
+    // second run still strokes its own separate outline, showing as a
+    // little boxed-off square sitting in the middle of what should read as
+    // one continuous line. What's actually needed is for this rect's own
+    // thin band to simply start `pad` in from the raw tile edge — flush
+    // against the vertical wall's own centerline — instead of at the edge
+    // itself, folding the corner into this same run rather than drawing it
+    // separately.
+    if (classifyRun(rect) === "horizontal" && rect.x !== 0 && rect.w > TILE_SIZE) {
+      const tx = rect.x / TILE_SIZE;
+      const ty = rect.y / TILE_SIZE;
+      const tileLen = rect.w / TILE_SIZE;
+      const pad = WALL_THICKNESS_PAD_PX;
+      // Either end of this run can be the corner an interior perpendicular
+      // wall passes through (see the doc comment above) — checked
+      // independently per end, since a run can meet a real vertical
+      // neighbor on either side, or both (e.g. a short divider segment
+      // pinched between two doors on one row but a full-width column below
+      // each end).
+      const continuesWest = isSolidTile(visualGrid, tx - 1, ty);
+      const westIsCorner =
+        !continuesWest && (isSolidTile(visualGrid, tx, ty - 1) || isSolidTile(visualGrid, tx, ty + 1));
+      const lastTx = tx + tileLen - 1;
+      const continuesEast = isSolidTile(visualGrid, tx + tileLen, ty);
+      const eastIsCorner =
+        !continuesEast && (isSolidTile(visualGrid, lastTx, ty - 1) || isSolidTile(visualGrid, lastTx, ty + 1));
+      if (westIsCorner || eastIsCorner) {
+        const x = rect.x + (westIsCorner ? pad : 0);
+        const w = rect.w - (westIsCorner ? pad : 0) - (eastIsCorner ? pad : 0) + (continuesEast ? pad : 0);
+        runs.push({
+          thin: clampToHouseBorder({ x, y: rect.y + pad, w, h: WALL_THICKNESS_PX }),
+          orientation: "horizontal",
+          isBackWall: ty === 0,
+        });
+        continue;
+      }
+    }
+    runs.push(makeWallRun(visualGrid, rect));
   }
   return runs;
 }
@@ -288,14 +348,89 @@ export function computeWallRects(): PixelRect[] {
   return buildWallRuns(buildWallGrid()).map((run) => run.thin);
 }
 
+/** One border wall segment intentionally left undrawn — see openExteriorEdges. */
+export interface OpenExteriorEdge {
+  axis: "row" | "col";
+  /** The border tile row (axis "row") or column (axis "col") itself. */
+  index: number;
+  /** Tile range [start, end) along the other axis that stays open. */
+  start: number;
+  end: number;
+}
+
 /**
- * The DRAWN subset of computeWallRects(): the south (front, camera-facing)
- * border row is omitted so the house reads as an open-front dollhouse per
- * the reference image, while still colliding (see computeWallRects).
- * Interior walls and the north/west/east exterior borders draw normally.
+ * A grass (outdoor) room's own south/east edge, wherever it lands exactly on
+ * the world's south/east border — e.g. Garden: that edge is already the
+ * playable world's own edge, so framing it with a wall/shadow reads as a
+ * fence around empty air instead of a house wall. Only that room's own span
+ * is affected; the rest of the same border row/column (other rooms that
+ * happen to share it, e.g. Entrance's south wall) still draws normally.
+ * Collision is unaffected — computeWallRects() never consults this.
+ * floorSystem.ts reads this same list so a grass room's floor reaches the
+ * true edge there too instead of stopping at the wall's usual pad inset.
+ *
+ * The range is widened by 1 tile past each end of the room's own span, not
+ * clipped tight to it: the tile immediately beyond either end (e.g. Garden's
+ * west wall column continuing down to meet the south border, one tile short
+ * of Garden's own west edge) is purely the world border's own blanket edge
+ * marking, not because any room needs a wall drawn there — left solid in
+ * visualGrid, it gives the room's own (still-drawn) west/north wall
+ * something to pad an orphaned end-cap against, a stray tab with nothing on
+ * the other side to butt up to.
+ *
+ * That widened tile is skipped, though, wherever it's ALSO a real wall
+ * corner some other (non-grass) room owns — e.g. Garden's south edge widens
+ * west into (x-1, y+h), but that's exactly Entrance's own south-east corner
+ * one column over. Opening it erases a real load-bearing wall Entrance still
+ * needs, leaving its own corner (and whatever interior wall runs through it,
+ * e.g. the Entrance/Garden divider) dangling short instead of reaching the
+ * border it was supposed to gain a pad target from.
+ */
+function isOtherRoomWallCorner(tx: number, ty: number, exclude: RoomDef): boolean {
+  return ROOMS.some((room) => {
+    if (room === exclude) return false;
+    const { x, y, w, h } = room.tiles;
+    const onNorthOrSouth = (ty === y - 1 || ty === y + h) && tx >= x - 1 && tx <= x + w;
+    const onWestOrEast = (tx === x - 1 || tx === x + w) && ty >= y - 1 && ty <= y + h;
+    return onNorthOrSouth || onWestOrEast;
+  });
+}
+
+export function openExteriorEdges(): OpenExteriorEdge[] {
+  const edges: OpenExteriorEdge[] = [];
+  for (const room of ROOMS) {
+    if (room.floorType !== "grass") continue;
+    const { x, y, w, h } = room.tiles;
+    if (y + h === WORLD_TILE_HEIGHT - 1) {
+      const start = isOtherRoomWallCorner(x - 1, y + h, room) ? x : x - 1;
+      const end = isOtherRoomWallCorner(x + w, y + h, room) ? x + w : x + w + 1;
+      edges.push({ axis: "row", index: y + h, start: Math.max(0, start), end: Math.min(WORLD_TILE_WIDTH, end) });
+    }
+    if (x + w === WORLD_TILE_WIDTH - 1) {
+      const start = isOtherRoomWallCorner(x + w, y - 1, room) ? y : y - 1;
+      const end = isOtherRoomWallCorner(x + w, y + h, room) ? y + h : y + h + 1;
+      edges.push({ axis: "col", index: x + w, start: Math.max(0, start), end: Math.min(WORLD_TILE_HEIGHT, end) });
+    }
+  }
+  return edges;
+}
+
+/**
+ * The DRAWN subset of computeWallRects(): every openExteriorEdges() segment
+ * is omitted so an outdoor room's own border edge reads as open ground,
+ * while still colliding (see computeWallRects). Everything else — interior
+ * walls, the rest of the exterior border — draws normally.
  */
 export function computeVisibleWallRects(): PixelRect[] {
-  return buildWallRuns(buildWallGrid(), WORLD_TILE_HEIGHT - 1).map((run) => run.thin);
+  const grid = buildWallGrid();
+  const visualGrid = grid.map((row) => row.slice());
+  for (const edge of openExteriorEdges()) {
+    for (let i = edge.start; i < edge.end; i++) {
+      if (edge.axis === "row") visualGrid[edge.index][i] = false;
+      else visualGrid[i][edge.index] = false;
+    }
+  }
+  return buildWallRuns(grid, visualGrid).map((run) => run.thin);
 }
 
 /** A box's flat (z=0) footprint corners, in world-pixel space, walked in perimeter order (each entry adjacent to its neighbors) — see drawBox. */
@@ -464,7 +599,14 @@ export const FRONT_WALL_SHADOW_ALPHA = 0.45;
 export function createWalls(scene: Phaser.Scene): WallSegment[] {
   const isTopdown = getCameraMode() === "topdown";
   const grid = buildWallGrid();
-  const runs = buildWallRuns(grid);
+  const visualGrid = grid.map((row) => row.slice());
+  for (const edge of openExteriorEdges()) {
+    for (let i = edge.start; i < edge.end; i++) {
+      if (edge.axis === "row") visualGrid[edge.index][i] = false;
+      else visualGrid[i][edge.index] = false;
+    }
+  }
+  const runs = buildWallRuns(grid, visualGrid);
   const segments: WallSegment[] = [];
   for (const run of runs) {
     const rect = run.thin;
