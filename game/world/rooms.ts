@@ -92,7 +92,18 @@ export const ROOMS: RoomDef[] = [
     // config/world.ts WORLD_TILE_HEIGHT) — the main front entrance. offset
     // 2 centers a 2-tile door in Entrance's 6-tile width (world tiles
     // 10-11), straddling the player spawn column.
-    doors: [{ side: "south", offset: 2, length: 2 }],
+    //
+    // East door -> Garden. Entrance's own tile row spans y14-19, but only
+    // y15-19 border Garden (Garden starts one row south of Entrance's own
+    // north edge) — offset 2 (local rows 2-3, world y18-19) keeps the door
+    // centered in that shared span with clear margin from both ends, well
+    // away from Garden's own furniture (grass-1/g2 sit mid-room, plant-2 #1
+    // sits past the door's south edge — see furnitureEditor.ts DEFAULT_ITEMS).
+    // White leaf (color override) instead of the usual stained-wood door.
+    doors: [
+      { side: "south", offset: 2, length: 2 },
+      { side: "east", offset: 2, length: 2, color: 0xf5f5f0 },
+    ],
     furniture: [],
   },
   {

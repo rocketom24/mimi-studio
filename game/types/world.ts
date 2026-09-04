@@ -11,6 +11,8 @@ export interface DoorGap {
   side: DoorSide;
   offset: number;
   length: number;
+  /** Leaf color override (0xrrggbb). Falls back to ARCH_PALETTE.door when omitted. */
+  color?: number;
 }
 
 export type FurnitureKind =

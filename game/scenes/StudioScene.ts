@@ -22,9 +22,13 @@ import type { Interactable } from "@/game/types/interaction";
 // applyCameraFraming's fit-zoom already sizes the house to fill FILL_FACTOR
 // of whatever viewport it's given (see computeFitZoom), so ZOOM_MIN/MAX are
 // relative multipliers ON TOP of that fit, not absolute zoom levels — 1
-// always means "fitted", regardless of window size/aspect.
+// always means "fitted", regardless of window size/aspect. ZOOM_MIN is
+// pinned to 1 (the fit itself) so the user can never zoom out past the
+// FILL_FACTOR framing into empty padded world space; zooming in (>1) is
+// still free since computeCameraBounds clamps bounds back to the house's
+// exact extent once the viewport is smaller than it.
 const FILL_FACTOR = 0.8;
-const ZOOM_MIN = 0.6;
+const ZOOM_MIN = 1;
 const ZOOM_MAX = 2.5;
 const ZOOM_STEP = 0.1;
 

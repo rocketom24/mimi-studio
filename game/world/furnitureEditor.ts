@@ -26,22 +26,29 @@ const STORAGE_KEY = "mimi-studio:furnitureEditor:v1";
  * when one exists, so it stays purely a fallback.
  */
 const DEFAULT_ITEMS: FurnitureEditorItem[] = [
-  { id: "sofa-removebg-preview-1788435297019-407587", kind: "sofa-removebg-preview", x: 102.14768981180916, y: 143.58179222894825, rotation: 0, scale: 1 },
-  { id: "tv-removebg-preview-1788435302309-827849", kind: "tv-removebg-preview", x: 57.768225882188844, y: 146.42777174513265, rotation: 0, scale: 1.8 },
-  { id: "bed-removebg-preview-1788435313131-81672", kind: "bed-removebg-preview", x: 336.52330987017353, y: 233.6030140210895, rotation: 0, scale: 1 },
-  { id: "pc-1788435327182-565160", kind: "pc", x: 326.2045364150044, y: 45.062079629544655, rotation: 0, scale: 1 },
+  { id: "sofa-removebg-preview-1788435297019-407587", kind: "sofa-removebg-preview", x: 116.16972875104216, y: 167.21366566758542, rotation: 0, scale: 1 },
+  { id: "tv-removebg-preview-1788435302309-827849", kind: "tv-removebg-preview", x: 67.00226076926154, y: 166.50160588021964, rotation: 0, scale: 1.4000000000000004 },
+  { id: "pc-1788435327182-565160", kind: "pc", x: 326.01557802736977, y: 53.369505057010144, rotation: 0, scale: 1.1 },
   { id: "chair-1788435337352-491020", kind: "chair", x: 360.31602181570827, y: 35.17984357222838, rotation: 0, scale: 1 },
-  { id: "plant-2-1788435346761-645199", kind: "plant-2", x: 28.81531762282947, y: 29.163937456504975, rotation: 0, scale: 1 },
-  { id: "plant-2-1788435354439-163005", kind: "plant-2", x: 254.92067619348927, y: 27.731492247743304, rotation: 0, scale: 1 },
-  { id: "centertable-removebg-preview-1788435415150-773159", kind: "centertable-removebg-preview", x: 59.93881259212219, y: 131.35421311070775, rotation: 0, scale: 1 },
-  { id: "bookshelf-removebg-preview-1788439324357-786572", kind: "bookshelf-removebg-preview", x: 263.18034487464575, y: 74.75782851402936, rotation: 0, scale: 1 },
-  { id: "almirah-removebg-preview-1788439329424-82462", kind: "almirah-removebg-preview", x: 257.61221032656744, y: 218.54097524908204, rotation: 0, scale: 1 },
+  { id: "plant-2-1788435346761-645199", kind: "plant-2", x: 228.25380368821445, y: 326.31924696364104, rotation: 0, scale: 1.1 },
+  { id: "plant-2-1788435354439-163005", kind: "plant-2", x: 370.7812568587184, y: 226.72092563027843, rotation: 0, scale: 1 },
+  { id: "centertable-removebg-preview-1788435415150-773159", kind: "centertable-removebg-preview", x: 68.47186057927101, y: 150.5948677043754, rotation: 0, scale: 1 },
+  { id: "bookshelf-removebg-preview-1788439324357-786572", kind: "bookshelf-removebg-preview", x: 263.84823211640673, y: 60.47777521344918, rotation: 0, scale: 1.2000000000000002 },
+  { id: "almirah-removebg-preview-1788439329424-82462", kind: "almirah-removebg-preview", x: 257.8257523343151, y: 218.32743324133435, rotation: 0, scale: 1 },
   { id: "dressing-table-removebg-preview-1788439337469-573029", kind: "dressing-table-removebg-preview", x: 258.4851651046857, y: 180.54928434014008, rotation: 0, scale: 1 },
   { id: "mirror-removebg-preview (1)-1788439343555-29770", kind: "mirror-removebg-preview (1)", x: 236.82220701869514, y: 161.10716315055296, rotation: 0, scale: 1 },
-  { id: "kitchen-removebg-preview-1788439355165-835245", kind: "kitchen-removebg-preview", x: 143.77496410720914, y: 45.666481162170484, rotation: 0, scale: 1 },
-  { id: "dining-removebg-preview-1788439365256-881947", kind: "dining-removebg-preview", x: 177.89121387407212, y: 92.7376133676747, rotation: 0, scale: 1 },
-  { id: "fridge-removebg-preview-1788439379412-137200", kind: "fridge-removebg-preview", x: 127.07557686721097, y: 79.41492805099716, rotation: 0, scale: 1 },
-  { id: "sink-removebg-preview-1788452301324-233947", kind: "sink-removebg-preview", x: 186.25479248016717, y: 37.61396203277987, rotation: 0, scale: 0.9 },
+  { id: "kitchen-removebg-preview-1788439355165-835245", kind: "kitchen-removebg-preview", x: 145.99844927391527, y: 54.55247722383828, rotation: 0, scale: 1.2000000000000002 },
+  { id: "fridge-removebg-preview-1788439379412-137200", kind: "fridge-removebg-preview", x: 119.32827899606988, y: 83.77647937408935, rotation: 0, scale: 1.1 },
+  { id: "sink-removebg-preview-1788452301324-233947", kind: "sink-removebg-preview", x: 190.301439477266, y: 40.0742969400242, rotation: 0, scale: 0.9 },
+  { id: "corner-sofa-removebg-preview-1788519967349-955190", kind: "corner-sofa-removebg-preview", x: 81.20144404842917, y: 78.40045855880147, rotation: 0, scale: 1.9000000000000008 },
+  { id: "dining2-removebg-preview-1788520014798-709680", kind: "dining2-removebg-preview", x: 170.22571267987126, y: 153.64045391467715, rotation: 0, scale: 1.5000000000000004 },
+  { id: "dchair1-removebg-preview-1788520027198-939327", kind: "dchair1-removebg-preview", x: 181.622813451182, y: 153.4841628150772, rotation: 0, scale: 1 },
+  { id: "dchair2-removebg-preview-1788520054888-988971", kind: "dchair2-removebg-preview", x: 155.73968022638206, y: 147.73920407115997, rotation: 0, scale: 0.8 },
+  { id: "bed2-removebg-preview-1788520080187-821975", kind: "bed2-removebg-preview", x: 344.11922403785195, y: 238.25562477106584, rotation: 0, scale: 2.6000000000000014 },
+  { id: "grass-1-removebg-preview-1788520107890-620936", kind: "grass-1-removebg-preview", x: 269.45315256472645, y: 263.69447089655114, rotation: 0, scale: 1.4000000000000004 },
+  { id: "clock-removebg-preview-1788520126643-915563", kind: "clock-removebg-preview", x: 263.3703092686799, y: 93.47168240958712, rotation: 0, scale: 1 },
+  { id: "g2-removebg-preview-1788523358555-676430", kind: "g2-removebg-preview", x: 362.90576655372377, y: 310.53873070833754, rotation: 0, scale: 2.300000000000001 },
+  { id: "plant-1-1788523450903-256618", kind: "plant-1", x: 134.48392646192693, y: 322.56028302761445, rotation: 0, scale: 1 },
 ];
 const ROTATE_STEP_DEG = 45;
 const SCALE_STEP = 0.1;
@@ -239,12 +246,7 @@ export class FurnitureEditor {
     }
     if (!Array.isArray(parsed)) return;
     for (const entry of parsed) {
-      // Items saved before per-kind BASE_WIDTH_TILES existed used their `scale`
-      // as a manual stand-in for realistic size (every kind shared one flat
-      // baseline width). That manual value would now stack on top of the
-      // correct per-kind baseline, so it's reset to neutral on load — a
-      // one-time size correction that never touches position/rotation.
-      if (isFurnitureEditorItem(entry)) this.spawn({ ...entry, scale: 1 });
+      if (isFurnitureEditorItem(entry)) this.spawn(entry);
     }
   }
 

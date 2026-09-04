@@ -74,11 +74,12 @@ function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness
   g.setDepth(visualDepth(Math.max(...footprint.map((c) => c.y))));
   g.setAlpha(1);
 
-  drawBox(g, footprint, DOOR_COLOR);
+  const color = p.door.color ?? DOOR_COLOR;
+  drawBox(g, footprint, color);
 
   // Knob near the free (non-hinge) edge, roughly waist height.
   const knob = project(p.hinge.x + dirX * p.span * 0.85, p.hinge.y + dirY * p.span * 0.85, WALL_HEIGHT_PX * 0.45);
-  g.fillStyle(lighten(DOOR_COLOR, 70), 1);
+  g.fillStyle(lighten(color, 70), 1);
   g.fillCircle(knob.x, knob.y, 1.5);
 }
 
