@@ -41,9 +41,15 @@ const DEFAULT_ITEMS: FurnitureEditorItem[] = [
   { id: "fridge-removebg-preview-1788439379412-137200", kind: "fridge-removebg-preview", x: 119.32827899606988, y: 83.77647937408935, rotation: 0, scale: 1.1 },
   { id: "sink-removebg-preview-1788452301324-233947", kind: "sink-removebg-preview", x: 190.301439477266, y: 40.0742969400242, rotation: 0, scale: 0.9 },
   { id: "corner-sofa-removebg-preview-1788519967349-955190", kind: "corner-sofa-removebg-preview", x: 81.20144404842917, y: 78.40045855880147, rotation: 0, scale: 1.9000000000000008 },
-  { id: "dining2-removebg-preview-1788520014798-709680", kind: "dining2-removebg-preview", x: 170.22571267987126, y: 153.64045391467715, rotation: 0, scale: 1.5000000000000004 },
-  { id: "dchair1-removebg-preview-1788520027198-939327", kind: "dchair1-removebg-preview", x: 181.622813451182, y: 153.4841628150772, rotation: 0, scale: 1 },
-  { id: "dchair2-removebg-preview-1788520054888-988971", kind: "dchair2-removebg-preview", x: 155.73968022638206, y: 147.73920407115997, rotation: 0, scale: 0.8 },
+  // Dining set (table + 2 chairs) shifted +26 world-px east as a group from
+  // their original placement — that placement sat flush against the sofa's
+  // back with zero gap, walling off the only north-south walkway through the
+  // living room's middle (corner sofa to sofa-back/dining area) except a
+  // hairline sliver by the east wall. +26 opens a real ~14px corridor
+  // between the sofa and the table without touching the east wall/door.
+  { id: "dining2-removebg-preview-1788520014798-709680", kind: "dining2-removebg-preview", x: 196.22571267987126, y: 153.64045391467715, rotation: 0, scale: 1.5000000000000004 },
+  { id: "dchair1-removebg-preview-1788520027198-939327", kind: "dchair1-removebg-preview", x: 207.622813451182, y: 153.4841628150772, rotation: 0, scale: 1 },
+  { id: "dchair2-removebg-preview-1788520054888-988971", kind: "dchair2-removebg-preview", x: 181.73968022638206, y: 147.73920407115997, rotation: 0, scale: 0.8 },
   { id: "bed2-removebg-preview-1788520080187-821975", kind: "bed2-removebg-preview", x: 344.11922403785195, y: 238.25562477106584, rotation: 0, scale: 2.6000000000000014 },
   { id: "grass-1-removebg-preview-1788520107890-620936", kind: "grass-1-removebg-preview", x: 269.45315256472645, y: 263.69447089655114, rotation: 0, scale: 1.4000000000000004 },
   { id: "clock-removebg-preview-1788520126643-915563", kind: "clock-removebg-preview", x: 263.3703092686799, y: 93.47168240958712, rotation: 0, scale: 1 },
@@ -52,10 +58,10 @@ const DEFAULT_ITEMS: FurnitureEditorItem[] = [
 ];
 
 /**
- * Trims a footprint's width slightly, clipping the transparent margin real
- * "-removebg-preview" exports carry around their subject. Kept close to 1:
- * this dimension must never undershoot a piece's real width or Mimi can
- * clip through its side.
+ * Minimal clearance trimmed off a footprint's authored width so Mimi doesn't
+ * visually clip the sprite's edge pixels while still walking as close to the
+ * piece as the physical object allows. Kept close to 1: this must never
+ * undershoot a piece's real width enough to let Mimi walk into it.
  */
 const FOOTPRINT_WIDTH_TRIM = 0.95;
 
@@ -82,137 +88,211 @@ function footprintDepthRatio(kind: string): number {
   return FOOTPRINT_DEPTH_RATIO_BY_KIND[canonicalKind(kind)] ?? FOOTPRINT_DEPTH_RATIO;
 }
 
-/** Fraction of a texture's natural height sampled at the bottom to locate its real base — see alphaBaseAnchor. */
-const FOOTPRINT_ANCHOR_BAND = 0.1;
+/**
+ * Kitchen counter-run pieces (kitchen/fridge/sink) are fixed flush against
+ * the room's north wall, not free-standing — but their footprint depth (see
+ * FOOTPRINT_DEPTH_RATIO_BY_KIND) is only a shallow strip centered on the
+ * sprite's front floor-contact point. That leaves the strip short of the
+ * wall behind it, an uncollided gap Mimi can walk into and read as standing
+ * inside/behind the counter. extendFootprintToBackWall stretches the rect's
+ * north edge to the room's actual wall face so the footprint runs unbroken
+ * from the wall to the counter's own front edge.
+ */
+const BACK_WALL_KITCHEN_KINDS = new Set(["kitchen", "fridge", "sink"]);
 
-interface AlphaBaseAnchor {
-  /** Horizontal position of the opaque content's bottom band, as a fraction of natural width. */
-  xFrac: number;
-  /** Fraction (0-1, from image top) of natural height where opaque content actually ends. */
-  yFrac: number;
+function extendFootprintToBackWall(
+  rect: { x: number; y: number; w: number; h: number },
+  kind: string,
+): { x: number; y: number; w: number; h: number } {
+  if (!BACK_WALL_KITCHEN_KINDS.has(canonicalKind(kind))) return rect;
+  const bounds = roomBoundsAt(rect.x + rect.w / 2, rect.y + rect.h / 2);
+  if (!bounds) return rect;
+  const wallFace = bounds.y0 - WALL_THICKNESS_PAD_PX;
+  const southEdge = rect.y + rect.h;
+  if (wallFace >= southEdge) return rect;
+  return { ...rect, y: wallFace, h: southEdge - wallFace };
 }
 
-const alphaBaseAnchorCache = new Map<string, AlphaBaseAnchor>();
+/**
+ * Some kinds break the generic width/depth-ratio model above outright — a
+ * footprint whose LONG axis runs along world Y and SHORT axis along world X
+ * (the opposite of every other kind's assumption), or a center that sits
+ * well off to the side of item.x/item.y (the image's declared bottom-center
+ * anchor, which for a couch or an off-center console doesn't land on the
+ * piece's own footprint at all). Those get an explicit measured entry below
+ * instead, applied purely in world space by computeFootprintRect exactly
+ * like every other kind. Expressed as fractions of baseDisplayWidth(kind) so
+ * they track a future re-scale of BASE_WIDTH_TILES.
+ */
+interface MeasuredFootprint {
+  depthFrac: number; // world-X extent / baseDisplayWidth
+  lengthFrac: number; // world-Y extent / baseDisplayWidth
+  offsetXFrac: number; // (footprint center X - item.x) / baseDisplayWidth
+  offsetYFrac: number; // (footprint center Y - item.y) / baseDisplayWidth
+}
 
 /**
- * Where a texture's real base actually sits, as (x, y) fractions of its raw
- * PNG — read from its alpha channel rather than assumed. Every placed item
- * is anchored (setOrigin) at a fixed fraction of its raw PNG — horizontally
- * centered (0.5), and at the full bottom edge (1) unless overridden in
- * ORIGIN_Y_BY_KIND — but these are flat isometric-style furniture renders,
- * not top-down footprint art: a desk shot at an angle can have its floor
- * legs sitting well off-center, and "-removebg-preview" exports often carry
- * a transparent margin below the real subject. Assuming the declared anchor
- * IS the object's true floor contact point is what left collision boxes
- * sitting on open floor next to (not under) the piece.
- *
- * yFrac is the lowest opaque row, generalizing the hand-measurement already
- * done for kitchen/fridge/sink in ORIGIN_Y_BY_KIND to every kind. xFrac is
- * the average X of opaque pixels within the bottom FOOTPRINT_ANCHOR_BAND of
- * that — the same "bottom band = floor contact" idea a prior version of
- * this file used, just producing one representative point instead of a
- * whole bounding box (which is what caused that version's over-large,
- * misplaced footprints — see computeFootprintRect below). Cached per
- * texture key; falls back to the image's own declared anchor (0.5, 1) if
- * pixel data can't be read.
+ * Per-kind footprints measured directly off the live rendered scene: with
+ * the game running, its Phaser camera transform and item.x/item.y read back
+ * live, real floor-contact points were picked by eye off screenshots of each
+ * piece (front-left/front-right/frontmost corners, or a front-edge span for
+ * shallow pieces) and converted through the exact inverse of project() —
+ * screenX = (worldX - worldY) * ISO_X_SCALE, screenY = (worldX + worldY) *
+ * ISO_Y_SCALE, solved directly for worldX/worldY, the same math
+ * unproject() in projection.ts uses. This is deliberately NOT
+ * screenToWorldDelta() from projection.ts: that function re-normalizes its
+ * result's magnitude for keyboard-input UX and is not a true geometric
+ * inverse — using it here (an earlier pass at this table did) silently
+ * shrinks every measurement by a direction-dependent amount, which is what
+ * left the sofa box undersized by ~30% before this fix. Verified by
+ * rendering each computed rect back over the live scene and confirming it
+ * sits on the real sprite, not just checked numerically.
  */
-function alphaBaseAnchor(scene: Phaser.Scene, textureKey: string): AlphaBaseAnchor {
-  const cached = alphaBaseAnchorCache.get(textureKey);
-  if (cached) return cached;
-  let result: AlphaBaseAnchor = { xFrac: 0.5, yFrac: 1 };
-  try {
-    const source = scene.textures.get(textureKey).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
-    const w = source.width;
-    const h = source.height;
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (ctx && w > 0 && h > 0) {
-      ctx.drawImage(source, 0, 0);
-      const data = ctx.getImageData(0, 0, w, h).data;
-      let bottomRow = 0;
-      outer: for (let y = h - 1; y >= 0; y--) {
-        for (let x = 0; x < w; x++) {
-          if (data[(y * w + x) * 4 + 3] > 10) {
-            bottomRow = y + 1;
-            break outer;
-          }
-        }
-      }
-      const bandTop = Math.max(0, bottomRow - h * FOOTPRINT_ANCHOR_BAND);
-      let sumX = 0;
-      let count = 0;
-      let minX = w;
-      let maxX = 0;
-      for (let y = Math.floor(bandTop); y < bottomRow; y++) {
-        for (let x = 0; x < w; x++) {
-          if (data[(y * w + x) * 4 + 3] > 10) {
-            sumX += x;
-            count++;
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-          }
-        }
-      }
-      // A real floor-contact base (legs, a stand, a rug) reads as a wide
-      // opaque span across the band. A handful of pixels clustered to one
-      // side — a cable, a shadow fringe, an anti-aliasing artifact left by
-      // background removal — is not that, and averaging them in as xFrac
-      // drags the anchor (and, once run through the isometric unproject,
-      // BOTH world axes) toward that one corner instead of the object's
-      // actual center. Below that span threshold, trust the declared
-      // horizontal center instead of the noisy sample.
-      const wideEnough = count > 0 && maxX - minX >= w * 0.4;
-      result = { xFrac: wideEnough ? sumX / count / w : 0.5, yFrac: bottomRow / h };
-    }
-  } catch {
-    // canvas read failed (texture not ready, tainted canvas) — no correction, matches the image's own declared anchor
+const MEASURED_FOOTPRINTS: Partial<Record<string, MeasuredFootprint>> = {
+  sofa: { depthFrac: 0.30486, lengthFrac: 0.99965, offsetXFrac: -0.366, offsetYFrac: -0.33587 },
+  // tv.png's total display width includes two free-standing floor speakers
+  // well clear of the actual console on either side (see BASE_WIDTH_TILES.tv);
+  // this footprint covers only the console itself, measured off its own
+  // front edge (which runs along world Y here, not X — same "rotated" shape
+  // as sofa's, see localFootprint). The speakers are thin poles, left
+  // non-colliding rather than inflating the box to reach them.
+  tv: { depthFrac: 0.0967, lengthFrac: 0.6026, offsetXFrac: -0.4241, offsetYFrac: -0.3994 },
+  centertable: { depthFrac: 0.7945, lengthFrac: 0.9004, offsetXFrac: -0.58973, offsetYFrac: -0.59053 },
+  // Same "rotated" shape as sofa/tv — bookshelf.png's front edge runs along
+  // world Y, not X.
+  bookshelf: { depthFrac: 0.21512, lengthFrac: 0.71707, offsetXFrac: -0.54722, offsetYFrac: -0.65496 },
+  almirah: { depthFrac: 0.36966, lengthFrac: 1.05616, offsetXFrac: -0.55428, offsetYFrac: -0.35408 },
+  "dressing-table": { depthFrac: 0.28424, lengthFrac: 0.94748, offsetXFrac: -0.84841, offsetYFrac: -0.84589 },
+  fridge: { depthFrac: 0.27461, lengthFrac: 0.91537, offsetXFrac: -0.38373, offsetYFrac: -0.26957 },
+  kitchen: { depthFrac: 0.84111, lengthFrac: 0.18504, offsetXFrac: -0.52321, offsetYFrac: -0.62586 },
+  sink: { depthFrac: 0.23029, lengthFrac: 0.82246, offsetXFrac: -1.7814, offsetYFrac: -1.45524 },
+  // Earlier pass picked a bad "back corner" point for the desk's depth,
+  // wildly overshooting past the desk's own footprint into the open floor
+  // Mimi walks through in front of it — confirmed by rendering it over the
+  // live scene. Redone from the desk's actual front-leg span + a reasonable
+  // desk depth ratio (0.5, matching a desk about half as deep as it is wide)
+  // instead of a mismeasured 3rd point.
+  pc: { depthFrac: 0.89162, lengthFrac: 0.44581, offsetXFrac: -0.41564, offsetYFrac: -0.6277 },
+  chair: { depthFrac: 0.70313, lengthFrac: 0.74948, offsetXFrac: -0.61487, offsetYFrac: -0.51646 },
+  "plant-1": { depthFrac: 0.4931, lengthFrac: 0.45657, offsetXFrac: -0.35521, offsetYFrac: -0.33317 },
+  "plant-2": { depthFrac: 0.61384, lengthFrac: 0.63616, offsetXFrac: -0.8448, offsetYFrac: -0.77737 },
+  // bed2.png's front edge sits at a real diagonal (~34 deg off world X), not
+  // close enough to an axis to force through the width/depth-ratio model's
+  // "pick whichever axis dominates" shortcut — that produced boxes that
+  // either missed the foot-posts (undersized) or overshot into the walkway
+  // beside the dresser (oversized), depending on the ratio tried. Fixed by
+  // taking the true oriented rectangle (front edge + a perpendicular depth)
+  // and using ITS 4 corners' own axis-aligned bounding box, rather than
+  // collapsing the depth onto whichever single world axis the front edge
+  // leans toward.
+  bed2: { depthFrac: 0.90064, lengthFrac: 0.93927, offsetXFrac: -0.65179, offsetYFrac: -0.59988 },
+  clock: { depthFrac: 0.28775, lengthFrac: 0.71939, offsetXFrac: -0.5401, offsetYFrac: -0.61336 },
+  "grass-1": { depthFrac: 0.58295, lengthFrac: 1.21074, offsetXFrac: -0.41599, offsetYFrac: -0.06084 },
+  // corner-sofa.png and garden-sofa.png are each a whole seating-nook GROUP
+  // (2-3 chairs + a table, sometimes a plant), not one object — no single
+  // rectangle is their "exact physical base." Footprint covers the group's
+  // outer extent so Mimi can't cut through the middle of the nook.
+  "corner-sofa": { depthFrac: 0.61854, lengthFrac: 1.6653, offsetXFrac: -1.06094, offsetYFrac: -0.54788 },
+  g2: { depthFrac: 0.75684, lengthFrac: 1.41193, offsetXFrac: -0.62864, offsetYFrac: -0.35983 },
+  // Table + 2 chairs as one group, same reasoning as corner-sofa/g2 above.
+  // dchair1/dchair2 are separate placed items in this same small nook
+  // (their anchors sit within ~25 world px of dining2's, well inside this
+  // footprint), so their own generic-model boxes stay harmlessly redundant
+  // with this one rather than needed for coverage.
+  //
+  // Earlier pass picked a bad 3rd point completing this as a parallelogram,
+  // which (like pc below) overshot past the table's own footprint into the
+  // walkway beside it — confirmed by rendering it over the live scene.
+  // Redone from the table's actual front-leg span + a table-depth ratio
+  // (0.55) instead of a mismeasured 3rd corner.
+  dining2: { depthFrac: 0.40353, lengthFrac: 0.73369, offsetXFrac: -0.65033, offsetYFrac: -0.45291 },
+};
+
+/**
+ * A piece's footprint size and its center's offset from item.x/item.y, both
+ * in the piece's own unrotated local frame (local +X = the sprite's declared
+ * "right", local +Y = "further from camera"/north). computeFootprintRect
+ * rotates this local rect by item.rotation to get the true world-space
+ * footprint — see there.
+ */
+interface LocalFootprint {
+  width: number;
+  depth: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+function localFootprint(kind: string, bw: number): LocalFootprint {
+  const measured = MEASURED_FOOTPRINTS[canonicalKind(kind)];
+  if (measured) {
+    return {
+      width: measured.depthFrac * bw,
+      depth: measured.lengthFrac * bw,
+      offsetX: measured.offsetXFrac * bw,
+      offsetY: measured.offsetYFrac * bw,
+    };
   }
-  alphaBaseAnchorCache.set(textureKey, result);
-  return result;
+  const width = bw * FOOTPRINT_WIDTH_TRIM;
+  const depth = width * footprintDepthRatio(kind);
+  // item.x/y is the piece's FRONT (camera-facing) floor edge, not its
+  // center, so the footprint extends one full depth backward (north, local
+  // -Y) from the anchor — its center sits half a depth north of it.
+  return { width, depth, offsetX: 0, offsetY: -depth / 2 };
 }
 
 /**
- * The item's real floor-contact point in world space — item.x/item.y
- * corrected for any gap between its display anchor and its actual visible
- * base (see alphaBaseAnchor). Only nudges the point used for collision;
- * never touches the item's stored x/y or its rendered position.
+ * Bounding box of a `width` x `depth` rectangle centered at (cx, cy) and
+ * rotated by `rotationDeg` around that center. Arcade physics static bodies
+ * are axis-aligned rects, so a rotation that isn't a multiple of 90 degrees
+ * can't be represented exactly — this returns its tight axis-aligned
+ * bounding box instead, which always fully covers the true rotated
+ * footprint (never underestimates it, so Mimi can never clip through a
+ * rotated corner) at the cost of a small amount of extra clearance on the
+ * diagonal. At 0/90/180/270, cos/sin land on 0 or 1 and this is exact.
  */
-function trueFloorAnchor(scene: Phaser.Scene, item: PlacedItem): { x: number; y: number } {
-  const textureKey = resolveEditorTextureKey(item.kind);
-  const { xFrac, yFrac } = alphaBaseAnchor(scene, textureKey);
-  const deltaScreenX = (xFrac - 0.5) * item.image.displayWidth;
-  const deltaScreenY = (yFrac - originYFor(item.kind)) * item.image.displayHeight;
-  if (Math.abs(deltaScreenX) < 0.5 && Math.abs(deltaScreenY) < 0.5) return { x: item.x, y: item.y };
-  return unproject(item.image.x + deltaScreenX, item.image.y + deltaScreenY);
+function rotateRectAABB(cx: number, cy: number, width: number, depth: number, rotationDeg: number): { x: number; y: number; w: number; h: number } {
+  const rad = (rotationDeg * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
+  const w = width * cos + depth * sin;
+  const h = width * sin + depth * cos;
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
 }
 
 /**
- * Solid floor footprint (world px, unprojected — same flat space as
- * collision.ts's room-furniture rects) for one placed item, built directly
- * from its own known world anchor and real size rather than its rendered
- * screen bounds.
+ * Solid floor footprint (world px — same flat space as collision.ts's
+ * room-furniture rects) for one placed item, built ONLY from its own
+ * world-space state: item.x/item.y (position), baseDisplayWidth(kind)*scale
+ * (size), footprintDepthRatio(kind) (depth), and item.rotation (orientation)
+ * — see localFootprint's doc comment for what "local" means. Those five
+ * values are the single source of truth; nothing here reads the sprite's
+ * pixels or calls project()/unproject() — rendering and collision are fully
+ * decoupled, so re-skinning a kind's PNG or nudging its display anchor can
+ * never silently move its hitbox. The local offset is rotated by
+ * item.rotation before being added to item.x/item.y, so a rotated piece's
+ * footprint pivots around its own anchor exactly like its sprite does.
  *
- * A prior version derived this by reading the sprite's on-screen bounding
- * box and unprojecting it back to world space. That's fundamentally lossy:
- * project()'s 45-degree shear means the axis-aligned world-space box
- * enclosing an unprojected screen rect is always inflated (its side is
- * driven by the SUM of the screen rect's width and height, not either
- * alone), no matter how finely the screen rect is sliced — that's what left
- * big collision squares sitting over open floor with nothing under them.
- *
- * trueFloorAnchor() gives the item's real world-space floor-contact point,
- * and baseDisplayWidth(kind) is the item's real intended size in world
- * units (the same table that sizes it on screen) — so the footprint can be
- * built once, centered on that point, entirely in world space with a single
- * point-accurate unproject (no bounding-box round-trip, no inflation).
+ * A prior version derived the footprint by reading the sprite's on-screen
+ * bounding box (or its alpha channel) and unprojecting screen-space samples
+ * back to world space. Both approaches estimate the footprint from how the
+ * sprite happens to look on screen, which is exactly backwards: the footprint
+ * should decide the render, not the other way around. Sampling pixels is
+ * also lossy on its own terms — project()'s 45-degree shear means the
+ * axis-aligned world-space box enclosing an unprojected screen rect is
+ * always inflated (driven by the SUM of the screen rect's width and height,
+ * not either alone) — which is what left big collision squares sitting over
+ * open floor with nothing under them.
  */
-function computeFootprintRect(scene: Phaser.Scene, item: PlacedItem): { x: number; y: number; w: number; h: number } {
-  const anchor = trueFloorAnchor(scene, item);
-  const width = baseDisplayWidth(item.kind) * item.scale * FOOTPRINT_WIDTH_TRIM;
-  const depth = width * footprintDepthRatio(item.kind);
-  return { x: anchor.x - width / 2, y: anchor.y - depth / 2, w: width, h: depth };
+function computeFootprintRect(item: PlacedItem): { x: number; y: number; w: number; h: number } {
+  const bw = baseDisplayWidth(item.kind) * item.scale;
+  const local = localFootprint(item.kind, bw);
+  const rad = (item.rotation * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const centerX = item.x + local.offsetX * cos - local.offsetY * sin;
+  const centerY = item.y + local.offsetX * sin + local.offsetY * cos;
+  const rect = rotateRectAABB(centerX, centerY, local.width, local.depth, item.rotation);
+  return extendFootprintToBackWall(rect, item.kind);
 }
 
 const ROTATE_STEP_DEG = 45;
@@ -419,7 +499,7 @@ export class FurnitureEditor {
 
   /** Solid collision rects (world px) for every currently spawned item — call after load(). */
   collisionRects(): { x: number; y: number; w: number; h: number }[] {
-    return Array.from(this.items.values()).map((item) => computeFootprintRect(this.scene, item));
+    return Array.from(this.items.values()).map(computeFootprintRect);
   }
 
   /** Serializes every placed item's world x/y/rotation/scale to localStorage. */
