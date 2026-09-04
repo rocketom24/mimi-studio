@@ -30,6 +30,29 @@ export function canonicalKind(kind: string): string {
     .toLowerCase();
 }
 
+/**
+ * Base names that changed outright (not just a suffix strip) when a
+ * public/furniture/ PNG was re-exported, keyed by canonicalKind() of the old
+ * name. Placed items saved before a rename still carry the old kind, so
+ * resolveEditorTextureKey() below maps them to the file that actually exists
+ * today. Sizing tables in furnitureEditor.ts intentionally keep keying off
+ * the pre-rename names via canonicalKind() directly — only the texture
+ * lookup needs today's filename.
+ */
+const RENAMED_STEMS: Record<string, string> = {
+  almirah: "almari",
+  "dressing-table": "dressingtable",
+  kitchen: "kitchen1",
+  "grass-1": "grass1",
+  g2: "garden-sofa",
+};
+
+/** Resolves a placed item's stored `kind` to the texture key actually preloaded for today's public/furniture/ filenames, so items saved before an asset rename (suffix strip or outright rename, see RENAMED_STEMS) keep rendering instead of showing a black/missing box. */
+export function resolveEditorTextureKey(kind: string): string {
+  const canonical = canonicalKind(kind);
+  return editorTextureKey(RENAMED_STEMS[canonical] ?? canonical);
+}
+
 /** Loads every discovered furniture PNG under its own editor texture key. Call once from the scene's preload(). */
 export function preloadEditorFurnitureSprites(scene: Phaser.Scene, filenames: readonly string[]): void {
   for (const filename of filenames) {

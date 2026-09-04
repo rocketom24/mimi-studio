@@ -1,7 +1,7 @@
 import * as Phaser from "phaser";
 import { project, unproject } from "@/game/world/projection";
 import { visualDepth } from "@/game/world/depth";
-import { canonicalKind, editorTextureKey } from "@/game/world/furnitureEditorAssets";
+import { canonicalKind, resolveEditorTextureKey } from "@/game/world/furnitureEditorAssets";
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import { WALL_THICKNESS_PAD_PX } from "@/game/world/wallSystem";
@@ -224,7 +224,7 @@ export class FurnitureEditor {
     if (!this.active) return;
     this.cancelPlacement();
     this.pendingKind = kind;
-    this.ghost = this.scene.add.image(0, 0, editorTextureKey(kind)).setOrigin(0.5, originYFor(kind)).setAlpha(0.6).setDepth(4000);
+    this.ghost = this.scene.add.image(0, 0, resolveEditorTextureKey(kind)).setOrigin(0.5, originYFor(kind)).setAlpha(0.6).setDepth(4000);
     this.applyScale(this.ghost, kind, 1);
   }
 
@@ -269,7 +269,7 @@ export class FurnitureEditor {
 
   private spawn(data: FurnitureEditorItem): void {
     const anchor = project(data.x, data.y);
-    const image = this.scene.add.image(anchor.x, anchor.y, editorTextureKey(data.kind)).setOrigin(0.5, originYFor(data.kind));
+    const image = this.scene.add.image(anchor.x, anchor.y, resolveEditorTextureKey(data.kind)).setOrigin(0.5, originYFor(data.kind));
     const baseScale = this.applyScale(image, data.kind, data.scale);
     image.setAngle(data.rotation);
     image.setDepth(visualDepth(data.y));
