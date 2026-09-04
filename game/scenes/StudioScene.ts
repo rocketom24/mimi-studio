@@ -38,7 +38,7 @@ export class StudioScene extends Phaser.Scene {
   readonly touchInput = new TouchInput();
   private interactionSystem!: InteractionSystem;
   private interactionPrompt!: InteractionPrompt;
-  /** Furniture placement overlay — see game/world/furnitureEditor.ts. Always spawns its saved/default layout; editing itself stays dev-only (gated in GameCanvas.tsx). Never read by house/collision/camera/player code. */
+  /** Furniture placement overlay — see game/world/furnitureEditor.ts. Always spawns its saved/default layout; editing itself stays dev-only (gated in GameCanvas.tsx). Loaded before createWorldCollision() so its items' rendered footprints become solid geometry. */
   furnitureEditor!: FurnitureEditor;
   private inputLocked = false;
   private wallSegments: WallSegment[] = [];
@@ -66,7 +66,10 @@ export class StudioScene extends Phaser.Scene {
     const input = new CombinedInput([new KeyboardInput(this), this.touchInput]);
     this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, input);
 
-    const collisionGroup = createWorldCollision(this);
+    this.furnitureEditor = new FurnitureEditor(this);
+    this.furnitureEditor.load();
+
+    const collisionGroup = createWorldCollision(this, this.furnitureEditor);
     this.physics.add.collider(this.player.sprite, collisionGroup);
 
     this.applyCameraFraming();
@@ -87,9 +90,6 @@ export class StudioScene extends Phaser.Scene {
     );
 
     this.input.keyboard?.on("keydown-ESC", this.handleEscape, this);
-
-    this.furnitureEditor = new FurnitureEditor(this);
-    this.furnitureEditor.load();
 
     this.game.events.emit(GAME_EVENTS.StudioReady, this);
   }

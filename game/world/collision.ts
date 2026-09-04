@@ -2,6 +2,7 @@ import * as Phaser from "phaser";
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import { computeWallRects } from "@/game/world/wallSystem";
+import type { FurnitureEditor } from "@/game/world/furnitureEditor";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
@@ -24,7 +25,7 @@ function addStaticRect(
  * plus solid furniture. Walls are derived from computeWallRects() so they
  * can never drift from what's drawn; furniture pieces opt out via `solid: false`.
  */
-export function createWorldCollision(scene: Phaser.Scene): Phaser.Physics.Arcade.StaticGroup {
+export function createWorldCollision(scene: Phaser.Scene, furnitureEditor: FurnitureEditor): Phaser.Physics.Arcade.StaticGroup {
   const group = scene.physics.add.staticGroup();
 
   for (const rect of computeWallRects()) {
@@ -43,6 +44,10 @@ export function createWorldCollision(scene: Phaser.Scene): Phaser.Physics.Arcade
         px(piece.h),
       );
     }
+  }
+
+  for (const rect of furnitureEditor.collisionRects()) {
+    addStaticRect(scene, group, rect.x, rect.y, rect.w, rect.h);
   }
 
   return group;

@@ -50,6 +50,171 @@ const DEFAULT_ITEMS: FurnitureEditorItem[] = [
   { id: "g2-removebg-preview-1788523358555-676430", kind: "g2-removebg-preview", x: 362.90576655372377, y: 310.53873070833754, rotation: 0, scale: 2.300000000000001 },
   { id: "plant-1-1788523450903-256618", kind: "plant-1", x: 134.48392646192693, y: 322.56028302761445, rotation: 0, scale: 1 },
 ];
+
+/**
+ * Trims a footprint's width slightly, clipping the transparent margin real
+ * "-removebg-preview" exports carry around their subject. Kept close to 1:
+ * this dimension must never undershoot a piece's real width or Mimi can
+ * clip through its side.
+ */
+const FOOTPRINT_WIDTH_TRIM = 0.95;
+
+/**
+ * Footprint depth (front-to-back world extent) as a fraction of the item's
+ * real width. Most furniture reads roughly half as deep as it is wide
+ * (sofas, tables, beds); flatter kinds get a smaller override below so
+ * their collision box doesn't reach further into the room than their real
+ * base does.
+ */
+const FOOTPRINT_DEPTH_RATIO = 0.5;
+const FOOTPRINT_DEPTH_RATIO_BY_KIND: Record<string, number> = {
+  tv: 0.16,
+  kitchen: 0.22,
+  fridge: 0.3,
+  sink: 0.28,
+  bookshelf: 0.3,
+  mirror: 0.12,
+  "dressing-table": 0.3,
+  almirah: 0.35,
+};
+
+function footprintDepthRatio(kind: string): number {
+  return FOOTPRINT_DEPTH_RATIO_BY_KIND[canonicalKind(kind)] ?? FOOTPRINT_DEPTH_RATIO;
+}
+
+/** Fraction of a texture's natural height sampled at the bottom to locate its real base — see alphaBaseAnchor. */
+const FOOTPRINT_ANCHOR_BAND = 0.1;
+
+interface AlphaBaseAnchor {
+  /** Horizontal position of the opaque content's bottom band, as a fraction of natural width. */
+  xFrac: number;
+  /** Fraction (0-1, from image top) of natural height where opaque content actually ends. */
+  yFrac: number;
+}
+
+const alphaBaseAnchorCache = new Map<string, AlphaBaseAnchor>();
+
+/**
+ * Where a texture's real base actually sits, as (x, y) fractions of its raw
+ * PNG — read from its alpha channel rather than assumed. Every placed item
+ * is anchored (setOrigin) at a fixed fraction of its raw PNG — horizontally
+ * centered (0.5), and at the full bottom edge (1) unless overridden in
+ * ORIGIN_Y_BY_KIND — but these are flat isometric-style furniture renders,
+ * not top-down footprint art: a desk shot at an angle can have its floor
+ * legs sitting well off-center, and "-removebg-preview" exports often carry
+ * a transparent margin below the real subject. Assuming the declared anchor
+ * IS the object's true floor contact point is what left collision boxes
+ * sitting on open floor next to (not under) the piece.
+ *
+ * yFrac is the lowest opaque row, generalizing the hand-measurement already
+ * done for kitchen/fridge/sink in ORIGIN_Y_BY_KIND to every kind. xFrac is
+ * the average X of opaque pixels within the bottom FOOTPRINT_ANCHOR_BAND of
+ * that — the same "bottom band = floor contact" idea a prior version of
+ * this file used, just producing one representative point instead of a
+ * whole bounding box (which is what caused that version's over-large,
+ * misplaced footprints — see computeFootprintRect below). Cached per
+ * texture key; falls back to the image's own declared anchor (0.5, 1) if
+ * pixel data can't be read.
+ */
+function alphaBaseAnchor(scene: Phaser.Scene, textureKey: string): AlphaBaseAnchor {
+  const cached = alphaBaseAnchorCache.get(textureKey);
+  if (cached) return cached;
+  let result: AlphaBaseAnchor = { xFrac: 0.5, yFrac: 1 };
+  try {
+    const source = scene.textures.get(textureKey).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+    const w = source.width;
+    const h = source.height;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (ctx && w > 0 && h > 0) {
+      ctx.drawImage(source, 0, 0);
+      const data = ctx.getImageData(0, 0, w, h).data;
+      let bottomRow = 0;
+      outer: for (let y = h - 1; y >= 0; y--) {
+        for (let x = 0; x < w; x++) {
+          if (data[(y * w + x) * 4 + 3] > 10) {
+            bottomRow = y + 1;
+            break outer;
+          }
+        }
+      }
+      const bandTop = Math.max(0, bottomRow - h * FOOTPRINT_ANCHOR_BAND);
+      let sumX = 0;
+      let count = 0;
+      let minX = w;
+      let maxX = 0;
+      for (let y = Math.floor(bandTop); y < bottomRow; y++) {
+        for (let x = 0; x < w; x++) {
+          if (data[(y * w + x) * 4 + 3] > 10) {
+            sumX += x;
+            count++;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+      }
+      // A real floor-contact base (legs, a stand, a rug) reads as a wide
+      // opaque span across the band. A handful of pixels clustered to one
+      // side — a cable, a shadow fringe, an anti-aliasing artifact left by
+      // background removal — is not that, and averaging them in as xFrac
+      // drags the anchor (and, once run through the isometric unproject,
+      // BOTH world axes) toward that one corner instead of the object's
+      // actual center. Below that span threshold, trust the declared
+      // horizontal center instead of the noisy sample.
+      const wideEnough = count > 0 && maxX - minX >= w * 0.4;
+      result = { xFrac: wideEnough ? sumX / count / w : 0.5, yFrac: bottomRow / h };
+    }
+  } catch {
+    // canvas read failed (texture not ready, tainted canvas) — no correction, matches the image's own declared anchor
+  }
+  alphaBaseAnchorCache.set(textureKey, result);
+  return result;
+}
+
+/**
+ * The item's real floor-contact point in world space — item.x/item.y
+ * corrected for any gap between its display anchor and its actual visible
+ * base (see alphaBaseAnchor). Only nudges the point used for collision;
+ * never touches the item's stored x/y or its rendered position.
+ */
+function trueFloorAnchor(scene: Phaser.Scene, item: PlacedItem): { x: number; y: number } {
+  const textureKey = resolveEditorTextureKey(item.kind);
+  const { xFrac, yFrac } = alphaBaseAnchor(scene, textureKey);
+  const deltaScreenX = (xFrac - 0.5) * item.image.displayWidth;
+  const deltaScreenY = (yFrac - originYFor(item.kind)) * item.image.displayHeight;
+  if (Math.abs(deltaScreenX) < 0.5 && Math.abs(deltaScreenY) < 0.5) return { x: item.x, y: item.y };
+  return unproject(item.image.x + deltaScreenX, item.image.y + deltaScreenY);
+}
+
+/**
+ * Solid floor footprint (world px, unprojected — same flat space as
+ * collision.ts's room-furniture rects) for one placed item, built directly
+ * from its own known world anchor and real size rather than its rendered
+ * screen bounds.
+ *
+ * A prior version derived this by reading the sprite's on-screen bounding
+ * box and unprojecting it back to world space. That's fundamentally lossy:
+ * project()'s 45-degree shear means the axis-aligned world-space box
+ * enclosing an unprojected screen rect is always inflated (its side is
+ * driven by the SUM of the screen rect's width and height, not either
+ * alone), no matter how finely the screen rect is sliced — that's what left
+ * big collision squares sitting over open floor with nothing under them.
+ *
+ * trueFloorAnchor() gives the item's real world-space floor-contact point,
+ * and baseDisplayWidth(kind) is the item's real intended size in world
+ * units (the same table that sizes it on screen) — so the footprint can be
+ * built once, centered on that point, entirely in world space with a single
+ * point-accurate unproject (no bounding-box round-trip, no inflation).
+ */
+function computeFootprintRect(scene: Phaser.Scene, item: PlacedItem): { x: number; y: number; w: number; h: number } {
+  const anchor = trueFloorAnchor(scene, item);
+  const width = baseDisplayWidth(item.kind) * item.scale * FOOTPRINT_WIDTH_TRIM;
+  const depth = width * footprintDepthRatio(item.kind);
+  return { x: anchor.x - width / 2, y: anchor.y - depth / 2, w: width, h: depth };
+}
+
 const ROTATE_STEP_DEG = 45;
 const SCALE_STEP = 0.1;
 const SCALE_MIN = 0.3;
@@ -183,6 +348,8 @@ interface PlacedItem extends FurnitureEditorItem {
  * that data, only adds its own sprites on top. Its layout (DEFAULT_ITEMS,
  * or a localStorage save on top of it) always spawns; only the drag/edit
  * tooling itself is dev-only (gated by `active`, see setActive/GameCanvas.tsx).
+ * collision.ts reads collisionRects() below once, right after load(), to
+ * turn every spawned item's rendered footprint into solid physics geometry.
  *
  * ponytail: no drop shadow under editor-placed items (existing furnitureSystem
  * pieces get one via a separate Graphics object kept in sync on every
@@ -248,6 +415,11 @@ export class FurnitureEditor {
     for (const entry of parsed) {
       if (isFurnitureEditorItem(entry)) this.spawn(entry);
     }
+  }
+
+  /** Solid collision rects (world px) for every currently spawned item — call after load(). */
+  collisionRects(): { x: number; y: number; w: number; h: number }[] {
+    return Array.from(this.items.values()).map((item) => computeFootprintRect(this.scene, item));
   }
 
   /** Serializes every placed item's world x/y/rotation/scale to localStorage. */
