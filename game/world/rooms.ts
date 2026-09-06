@@ -1,6 +1,5 @@
 import type { RoomDef } from "@/game/types/world";
-import { TILE_SIZE } from "@/game/config/world";
-import { PALETTE } from "@/game/world/palette";
+import { FLOOR_COLOR, TILE_SIZE } from "@/game/config/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
@@ -30,7 +29,7 @@ export const ROOMS: RoomDef[] = [
     id: "living-room",
     label: "LIVING ROOM",
     tiles: { x: 1, y: 1, w: 13, h: 12 },
-    floorColor: 0xa9784f,
+    floorColor: FLOOR_COLOR,
     floorType: "wood",
     doors: [
       { side: "east", offset: 5, length: 2 }, // -> Bedroom + Study, the only door between them (Entrance has none)
@@ -44,7 +43,7 @@ export const ROOMS: RoomDef[] = [
     id: "cat-room",
     label: "CAT ROOM",
     tiles: { x: 1, y: 14, w: 6, h: 6 },
-    floorColor: 0xa9784f,
+    floorColor: FLOOR_COLOR,
     floorType: "wood",
     doors: [],
     furniture: [],
@@ -53,7 +52,7 @@ export const ROOMS: RoomDef[] = [
     id: "entrance",
     label: "ENTRANCE",
     tiles: { x: 8, y: 14, w: 6, h: 6 },
-    floorColor: 0xa9784f,
+    floorColor: FLOOR_COLOR,
     floorType: "wood",
     // South door sits on the world's exterior border row (see
     // config/world.ts WORLD_TILE_HEIGHT) — the main front entrance. offset
@@ -80,7 +79,7 @@ export const ROOMS: RoomDef[] = [
     // bottom ~30% is now the "garden" room below, with the usual 1-tile
     // gap (world row 14) between them.
     tiles: { x: 15, y: 1, w: 8, h: 13 },
-    floorColor: 0xb9895e,
+    floorColor: FLOOR_COLOR,
     floorType: "wood",
     doors: [],
     windows: [],

@@ -1,6 +1,6 @@
 import * as Phaser from "phaser";
 import { WALL_HEIGHT_PX } from "@/game/config/world";
-import { ARCH_PALETTE, lighten } from "@/game/world/palette";
+import { ARCH_PALETTE, darken, lighten } from "@/game/world/palette";
 import { visualDepth } from "@/game/world/depth";
 import { project } from "@/game/world/projection";
 import { computeDoorPlacements, drawBox, WALL_THICKNESS_PX, type BoxFootprint, type DoorPlacement } from "@/game/world/wallSystem";
@@ -46,9 +46,9 @@ function doorCenter(p: DoorPlacement): { x: number; y: number } {
  * depth fixed at creation-time drifts out of sync with Mimi's own per-frame
  * depth (see Player.update) and she reads as popping in front of or behind
  * an open door instead of passing it cleanly. Always fully solid (unlike the
- * translucent shadow the wall it's plugging renders as — see wallSystem's
- * drawWallShadow) — a closed door reads as a real, solid plug in the
- * doorway, not a see-through gap into the wall behind it.
+ * translucent footprint marker the wall it's plugging renders as — see
+ * wallSystem's drawWallShadow) — a closed door reads as a real, solid plug
+ * in the doorway, not a see-through gap into the wall behind it.
  */
 function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness: number): void {
   g.clear();
@@ -76,11 +76,84 @@ function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness
 
   const color = p.door.color ?? DOOR_COLOR;
   drawBox(g, footprint, color);
+  drawDoorPanels(g, footprint, color);
 
-  // Knob near the free (non-hinge) edge, roughly waist height.
-  const knob = project(p.hinge.x + dirX * p.span * 0.85, p.hinge.y + dirY * p.span * 0.85, WALL_HEIGHT_PX * 0.45);
-  g.fillStyle(lighten(color, 70), 1);
-  g.fillCircle(knob.x, knob.y, 1.5);
+  // Lever handle + round backplate near the free (non-hinge) edge, waist height.
+  const backplate = project(p.hinge.x + dirX * p.span * 0.85, p.hinge.y + dirY * p.span * 0.85, WALL_HEIGHT_PX * 0.45);
+  g.fillStyle(darken(HANDLE_COLOR, 20), 1);
+  g.fillCircle(backplate.x, backplate.y, 2);
+  g.fillStyle(HANDLE_COLOR, 1);
+  g.fillCircle(backplate.x, backplate.y, 1.4);
+  const leverTip = project(p.hinge.x + dirX * p.span * 0.7, p.hinge.y + dirY * p.span * 0.7, WALL_HEIGHT_PX * 0.45);
+  g.lineStyle(1, HANDLE_COLOR, 1);
+  g.lineBetween(backplate.x, backplate.y, leverTip.x, leverTip.y);
+  g.fillStyle(lighten(HANDLE_COLOR, 60), 0.9);
+  g.fillCircle(backplate.x - 0.4, backplate.y - 0.4, 0.5);
+}
+
+/** Warm brass, independent of the leaf's own (per-room) body color. */
+const HANDLE_COLOR = 0xc9a24b;
+
+/**
+ * Raised-panel detail on a door leaf's actual face — a 2-row panel grid with
+ * a light/dark bevel per panel, plus faint vertical wood-grain streaks — laid
+ * out with the same bilinear per-face point trick wallSystem's
+ * drawBrickFace uses for its brick field. `drawBox` draws two near faces (the
+ * door's thin edge and its wide face); only the longer of the two — the one
+ * actually facing the camera as "the door" rather than its sliver edge — gets
+ * panels, so a doorway seen edge-on never has paneling painted onto the
+ * invisible-width face.
+ */
+function drawDoorPanels(g: Phaser.GameObjects.Graphics, footprint: BoxFootprint, color: number): void {
+  const base = footprint.map((pt) => project(pt.x, pt.y));
+  const top = footprint.map((pt) => project(pt.x, pt.y, WALL_HEIGHT_PX));
+
+  let nearIdx = 0;
+  for (let i = 1; i < 4; i++) {
+    if (footprint[i].x + footprint[i].y > footprint[nearIdx].x + footprint[nearIdx].y) nearIdx = i;
+  }
+  const prevIdx = (nearIdx + 3) % 4;
+  const nextIdx = (nearIdx + 1) % 4;
+  const worldLen = (a: number, b: number) => Math.hypot(footprint[a].x - footprint[b].x, footprint[a].y - footprint[b].y);
+  const [aIdx, bIdx] = worldLen(prevIdx, nearIdx) >= worldLen(nextIdx, nearIdx) ? [prevIdx, nearIdx] : [nextIdx, nearIdx];
+
+  const topA = top[aIdx];
+  const topB = top[bIdx];
+  const baseA = base[aIdx];
+  const baseB = base[bIdx];
+  const at = (u: number, v: number) => {
+    const t = { x: topA.x + (topB.x - topA.x) * u, y: topA.y + (topB.y - topA.y) * u };
+    const b = { x: baseA.x + (baseB.x - baseA.x) * u, y: baseA.y + (baseB.y - baseA.y) * u };
+    return { x: t.x + (b.x - t.x) * v, y: t.y + (b.y - t.y) * v };
+  };
+
+  const PANEL_ROWS: [number, number][] = [
+    [0.08, 0.46],
+    [0.54, 0.92],
+  ];
+  const uInset = 0.12;
+  for (const [vTop, vBottom] of PANEL_ROWS) {
+    const tl = at(uInset, vTop);
+    const tr = at(1 - uInset, vTop);
+    const br = at(1 - uInset, vBottom);
+    const bl = at(uInset, vBottom);
+    g.fillStyle(darken(color, 18), 0.9);
+    g.fillPoints([tl, tr, br, bl], true);
+    g.lineStyle(1, lighten(color, 35), 0.8);
+    g.lineBetween(tl.x, tl.y, tr.x, tr.y);
+    g.lineBetween(tl.x, tl.y, bl.x, bl.y);
+    g.lineStyle(1, darken(color, 40), 0.8);
+    g.lineBetween(tr.x, tr.y, br.x, br.y);
+    g.lineBetween(bl.x, bl.y, br.x, br.y);
+  }
+
+  // Faint vertical wood-grain streaks across the whole face.
+  g.lineStyle(1, darken(color, 10), 0.15);
+  for (let u = 0.06; u < 1; u += 0.09) {
+    const p0 = at(u, 0.05);
+    const p1 = at(u, 0.95);
+    g.lineBetween(p0.x, p0.y, p1.x, p1.y);
+  }
 }
 
 /** Real doors are 2 tiles wide (see rooms.ts doc comment); anything wider is an open archway, not a door. */

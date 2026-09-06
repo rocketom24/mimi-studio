@@ -30,7 +30,7 @@ const px = (tiles: number) => tiles * TILE_SIZE;
 /** A single drawn wall segment, kept around so occlusionSystem can fade its front face live. */
 export interface WallSegment {
   rect: PixelRect;
-  graphics: Phaser.GameObjects.Graphics;
+  graphics: Phaser.GameObjects.GameObject;
 }
 
 /**
@@ -527,31 +527,72 @@ export function drawBox(g: Phaser.GameObjects.Graphics, corners: BoxFootprint, b
   g.strokePoints(top, true);
 }
 
-/** Wall-specific wrapper: a rect's own corners as a BoxFootprint, drawn in WALL_COLOR (see drawBox). */
-function drawWallBlock(g: Phaser.GameObjects.Graphics, rect: PixelRect): void {
-  drawBox(
-    g,
-    [
-      { x: rect.x, y: rect.y },
-      { x: rect.x + rect.w, y: rect.y },
-      { x: rect.x + rect.w, y: rect.y + rect.h },
-      { x: rect.x, y: rect.y + rect.h },
-    ],
-    WALL_COLOR,
-  );
-}
-
 function isSolidTile(grid: boolean[][], tx: number, ty: number): boolean {
   return ty >= 0 && ty < grid.length && tx >= 0 && tx < grid[ty].length && grid[ty][tx];
 }
 
+/** A wall rect's world corners, projected footprint (`base`) and roofline (`top`), plus which corner is nearest the fixed camera — shared by drawWallBlockFlat and strokeWallBlock so both trace the same box. */
+function wallBoxCorners(rect: PixelRect) {
+  const corners: BoxFootprint = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+    { x: rect.x, y: rect.y + rect.h },
+  ];
+  const base = corners.map((p) => project(p.x, p.y));
+  const top = corners.map((p) => project(p.x, p.y, WALL_HEIGHT_PX));
+  let nearIdx = 0;
+  for (let i = 1; i < 4; i++) {
+    if (corners[i].x + corners[i].y > corners[nearIdx].x + corners[nearIdx].y) nearIdx = i;
+  }
+  return { corners, base, top, nearIdx, prevIdx: (nearIdx + 3) % 4, nextIdx: (nearIdx + 1) % 4 };
+}
+
 /**
- * Flat shadow cast for an invisible "front" wall in isometric — same
- * footprint rect as the real wall (see createWalls's isBackWall split),
- * flush with the floor instead of the full 3D block. Mimi still collides
- * with the real (invisible) wall at exactly this footprint — computeWallRects
- * doesn't know about isBackWall at all — so drawing its outline is what lets
- * her see the boundary coming instead of walking into it blind, repeatedly.
+ * One back-wall run (see createWalls' isBackWall split) drawn as a flat-color
+ * 3D block: footprint plate, top cap, and the two camera-facing side faces
+ * are all a plain flat fill — no brick field, no photo texture, every pixel
+ * is drawn vector shapes. Front walls stay invisible instead (see
+ * drawWallShadow) — the dollhouse's whole open-cutaway view depends on them
+ * not blocking the camera's line into a room.
+ */
+function drawWallBlockFlat(scene: Phaser.Scene, rect: PixelRect, depth: number, stroke: boolean): WallSegment {
+  const { corners, base, top, nearIdx, prevIdx, nextIdx } = wallBoxCorners(rect);
+  const g = scene.add.graphics().setDepth(depth);
+  g.fillStyle(WALL_COLOR, 1);
+  g.fillPoints(base, true);
+  g.fillPoints([base[prevIdx], base[nearIdx], top[nearIdx], top[prevIdx]], true);
+  g.fillPoints([base[nextIdx], base[nearIdx], top[nearIdx], top[nextIdx]], true);
+  g.fillPoints(top, true);
+
+  if (stroke) strokeWallBlock(g, rect, { corners, base, top, nearIdx, prevIdx, nextIdx });
+  return { rect, graphics: g };
+}
+
+/** Traces one wall block's outline — top cap perimeter plus its two near vertical edges — for edge definition. Drawn once per run (not per Y-sort band, see createWalls) so a run split into bands never shows a stroke seam at a row join. */
+function strokeWallBlock(
+  g: Phaser.GameObjects.Graphics,
+  rect: PixelRect,
+  corners = wallBoxCorners(rect),
+): void {
+  const { base, top, nearIdx, prevIdx, nextIdx } = corners;
+  g.lineStyle(1, ARCH_PALETTE.outline, 0.6);
+  g.strokePoints(top, true);
+  g.lineBetween(top[prevIdx].x, top[prevIdx].y, base[prevIdx].x, base[prevIdx].y);
+  g.lineBetween(top[nearIdx].x, top[nearIdx].y, base[nearIdx].x, base[nearIdx].y);
+  g.lineBetween(top[nextIdx].x, top[nextIdx].y, base[nextIdx].x, base[nextIdx].y);
+}
+
+/**
+ * Flat footprint marker for an invisible "front" wall in isometric — same
+ * rect as the real wall (see createWalls' isBackWall split), flush with the
+ * floor instead of the full 3D block. Mimi still collides with the real
+ * (invisible) wall at exactly this footprint — computeWallRects doesn't know
+ * about isBackWall at all — so drawing its outline is what lets her see the
+ * boundary coming instead of walking into it blind. Kept deliberately
+ * near-invisible: a front wall standing as a full solid block would block
+ * the camera's view straight into whatever room it faces, breaking the
+ * whole open-dollhouse-cutaway look.
  */
 function drawWallShadow(g: Phaser.GameObjects.Graphics, rect: PixelRect, opts: { fill?: boolean; stroke?: boolean } = {}): void {
   const { fill = true, stroke = true } = opts;
@@ -561,7 +602,7 @@ function drawWallShadow(g: Phaser.GameObjects.Graphics, rect: PixelRect, opts: {
   const sw = project(rect.x, rect.y + rect.h);
 
   if (fill) {
-    g.fillStyle(darken(WALL_COLOR, 35), FRONT_WALL_SHADOW_ALPHA);
+    g.fillStyle(darken(WALL_COLOR, 8), FRONT_WALL_SHADOW_ALPHA);
     g.fillPoints([nw, ne, se, sw], true);
   }
   if (stroke) {
@@ -570,15 +611,16 @@ function drawWallShadow(g: Phaser.GameObjects.Graphics, rect: PixelRect, opts: {
   }
 }
 
-/** Opacity of a "front" wall's flat shadow (see drawWallShadow). */
-export const FRONT_WALL_SHADOW_ALPHA = 0.45;
+/** Opacity of a "front" wall's flat footprint marker (see drawWallShadow). */
+export const FRONT_WALL_SHADOW_ALPHA = 0.2;
 
 /**
  * Renders every wall run. Only draws the house's back walls (north row,
  * west column — see buildWallRuns' isBackWall) as full solid 3D blocks
- * (drawWallBlock); every other wall (south/east exterior border, every
- * interior divider) draws as a flat translucent shadow (drawWallShadow)
- * instead — invisible enough to keep the elevated dollhouse view open, but
+ * (drawWallBlockFlat, single flat color, no texture); every other wall
+ * (south/east exterior border, every interior divider) draws as a flat,
+ * near-invisible footprint marker (drawWallShadow) instead — invisible
+ * enough to keep the elevated dollhouse view open into every room, but
  * still marking exactly where its (very real) collision footprint is. Doors
  * read as openings either way — doorSystem draws their leaf independently
  * of wall styling.
@@ -620,9 +662,7 @@ export function createWalls(scene: Phaser.Scene): WallSegment[] {
       // every other row along the run. She can never stand behind the
       // house's own outer wall, so it always belongs at the back instead of
       // Y-sorting against her.
-      const g = scene.add.graphics().setDepth(DEPTH.DYNAMIC_BASE);
-      drawWallBlock(g, rect);
-      segments.push({ rect, graphics: g });
+      segments.push(drawWallBlockFlat(scene, rect, DEPTH.DYNAMIC_BASE, true));
       continue;
     }
     // Front (translucent) walls have the same merged-rect problem as back

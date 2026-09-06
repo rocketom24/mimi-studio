@@ -9,7 +9,7 @@ import { createFurniture, preloadFurnitureSprites } from "@/game/world/furniture
 import { createWorldCollision } from "@/game/world/collision";
 import { FurnitureEditor } from "@/game/world/furnitureEditor";
 import { FURNITURE_ASSET_FILES_REGISTRY_KEY, preloadEditorFurnitureSprites } from "@/game/world/furnitureEditorAssets";
-import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from "@/game/entities/Player";
+import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, preloadPlayerSprite } from "@/game/entities/Player";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import { TouchInput } from "@/game/input/TouchInput";
 import { CombinedInput } from "@/game/input/CombinedInput";
@@ -52,6 +52,7 @@ export class StudioScene extends Phaser.Scene {
   }
 
   preload(): void {
+    preloadPlayerSprite(this);
     preloadFurnitureSprites(this);
     const furnitureAssetFiles = this.registry.get(FURNITURE_ASSET_FILES_REGISTRY_KEY) as string[] | undefined;
     preloadEditorFurnitureSprites(this, furnitureAssetFiles ?? []);
@@ -120,7 +121,7 @@ export class StudioScene extends Phaser.Scene {
     for (const obj of this.levelObjects) obj.destroy();
     this.levelObjects = [];
 
-    this.levelObjects.push(createHouseFloor(this));
+    this.levelObjects.push(...createHouseFloor(this));
 
     this.wallSegments = createWalls(this);
     this.levelObjects.push(...this.wallSegments.map((segment) => segment.graphics));

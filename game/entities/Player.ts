@@ -6,18 +6,22 @@ import type { Facing, PlayerState } from "@/game/types/player";
 import { visualDepth } from "@/game/world/depth";
 import { project, screenToWorldDelta } from "@/game/world/projection";
 
-// Sized so WALL_HEIGHT_PX (40, see config/world.ts) reads as a realistic
-// ~2.1x her height for door proportions (wallSystem/doorSystem door leaves
-// span the full wall height, no separate header geometry needed).
-export const PLAYER_WIDTH = 12;
-export const PLAYER_HEIGHT = 19;
+const TEXTURE_KEY = "mimi";
+const SPRITE_PATH = "/assets/game/character/mimi.png";
 
-// Compact body over her lower body/legs, excluding hair and head so those
-// never snag on walls. Texture-local: shirt+legs span x[2,10) y[9,19).
-const BODY_WIDTH = 8;
-const BODY_HEIGHT = 10;
-const BODY_OFFSET_X = 2;
-const BODY_OFFSET_Y = 9;
+// The source PNG is trimmed to its alpha bounding box, so origin (0.5, 1)
+// lands exactly on her feet. Target on-screen height in world px — about
+// 0.8x WALL_HEIGHT_PX (40, see config/world.ts) so she reads at a believable
+// scale next to doors/furniture; actual scale is derived from the loaded
+// texture's native size at runtime below, whatever that native size is.
+export const PLAYER_HEIGHT = 32;
+
+// Body hitbox as fractions of the source image, measured off its alpha
+// bounding box: hair/face ends and the sweater collar starts ~33% down, and
+// the sweater/arms are already the widest thing in the crop so the box only
+// needs a small side margin.
+const BODY_TOP_FRACTION = 0.33;
+const BODY_SIDE_MARGIN_FRACTION = 0.05;
 
 // Entrance floor (world tiles x8-13, y14-19), near the front door.
 export const PLAYER_SPAWN_TILE_X = 10;
@@ -26,22 +30,9 @@ export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 
 const PLAYER_SPEED = 65; // logical px/sec
-const PLAYER_SCALE = 1.15;
 
 const IDLE_BOB_TIME_SCALE = 1;
 const WALK_BOB_TIME_SCALE = 3;
-
-const SKIN_COLOR = 0xe8b98c;
-const HAIR_COLOR = 0x3a2a1e;
-const SHIRT_COLOR = 0x6f5c9e;
-const LEGS_COLOR = 0x2b2340;
-const EYE_COLOR = 0x1c1626;
-
-const FACINGS: Facing[] = ["down", "up", "left", "right"];
-
-function textureKey(facing: Facing): string {
-  return `mimi-${facing}`;
-}
 
 /** Diagonal movement reports vertical facing (deterministic tie-break). */
 function facingFromDelta(dx: number, dy: number): Facing {
@@ -49,46 +40,9 @@ function facingFromDelta(dx: number, dy: number): Facing {
   return dx < 0 ? "left" : "right";
 }
 
-/** Draws the placeholder Mimi silhouette for one facing direction into its own texture. */
-function generateFacingTexture(scene: Phaser.Scene, facing: Facing): void {
-  const key = textureKey(facing);
-  if (scene.textures.exists(key)) return;
-
-  const g = scene.add.graphics();
-
-  g.fillStyle(SHIRT_COLOR, 1);
-  g.fillRect(2, 9, 8, 6);
-  g.fillStyle(LEGS_COLOR, 1);
-  g.fillRect(2, 15, 3, 4);
-  g.fillRect(7, 15, 3, 4);
-
-  g.fillStyle(SKIN_COLOR, 1);
-  g.fillRect(2, 0, 8, 9);
-
-  g.fillStyle(HAIR_COLOR, 1);
-  if (facing === "down") {
-    g.fillRect(2, 0, 8, 4);
-    g.fillRect(2, 4, 1, 4);
-    g.fillRect(9, 4, 1, 4);
-    g.fillStyle(EYE_COLOR, 1);
-    g.fillRect(4, 5, 1, 1);
-    g.fillRect(7, 5, 1, 1);
-  } else if (facing === "up") {
-    g.fillRect(2, 0, 8, 9);
-  } else if (facing === "left") {
-    g.fillRect(2, 0, 8, 4);
-    g.fillRect(6, 4, 4, 6);
-    g.fillStyle(EYE_COLOR, 1);
-    g.fillRect(2, 5, 1, 1);
-  } else {
-    g.fillRect(2, 0, 8, 4);
-    g.fillRect(2, 4, 4, 6);
-    g.fillStyle(EYE_COLOR, 1);
-    g.fillRect(9, 5, 1, 1);
-  }
-
-  g.generateTexture(key, PLAYER_WIDTH, PLAYER_HEIGHT);
-  g.destroy();
+/** Loads Mimi's sprite. Call once from the scene's preload(). */
+export function preloadPlayerSprite(scene: Phaser.Scene): void {
+  scene.load.image(TEXTURE_KEY, SPRITE_PATH);
 }
 
 /**
@@ -112,25 +66,31 @@ export class Player {
   private readonly bobTween: Phaser.Tweens.Tween;
 
   constructor(scene: Phaser.Scene, x: number, y: number, input?: InputSource) {
-    for (const facing of FACINGS) generateFacingTexture(scene, facing);
-
     this.state = { facing: "down", animationState: "idle" };
     this.input = input ?? new KeyboardInput(scene);
 
-    this.sprite = scene.physics.add.sprite(x, y, textureKey(this.state.facing));
+    const source = scene.textures.get(TEXTURE_KEY).getSourceImage();
+    const scale = PLAYER_HEIGHT / source.height;
+    const bodyOffsetX = Math.round(source.width * BODY_SIDE_MARGIN_FRACTION);
+    const bodyOffsetY = Math.round(source.height * BODY_TOP_FRACTION);
+    const bodyWidth = Math.round(source.width - 2 * bodyOffsetX);
+    const bodyHeight = Math.round(source.height - bodyOffsetY);
+
+    this.sprite = scene.physics.add.sprite(x, y, TEXTURE_KEY);
     this.sprite.setOrigin(0.5, 1);
     this.sprite.setVisible(false);
-    this.sprite.setScale(PLAYER_SCALE);
+    this.sprite.setScale(scale);
 
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
-    body.setSize(BODY_WIDTH, BODY_HEIGHT);
-    body.setOffset(BODY_OFFSET_X, BODY_OFFSET_Y);
+    body.setSize(bodyWidth, bodyHeight);
+    body.setOffset(bodyOffsetX, bodyOffsetY);
     body.setCollideWorldBounds(true);
 
-    this.visual = scene.add.sprite(x, y, textureKey(this.state.facing));
+    this.visual = scene.add.sprite(x, y, TEXTURE_KEY);
     this.visual.setOrigin(0.5, 1);
-    this.visual.setScale(PLAYER_SCALE);
+    this.visual.setScale(scale);
     this.visual.setDepth(visualDepth(y));
+    this.visual.setFlipX(this.state.facing === "left");
 
     this.bobTween = scene.tweens.add({
       targets: this.bob,
@@ -193,7 +153,10 @@ export class Player {
   setFacing(facing: Facing): void {
     if (this.state.facing === facing) return;
     this.state = { ...this.state, facing };
-    this.visual.setTexture(textureKey(facing));
+    // ponytail: only one directional pose shipped (front-facing); mirrored
+    // for left/right, reused as-is for up/down. Add real back/side art and
+    // swap textures per facing if walking-away needs to look correct.
+    this.visual.setFlipX(facing === "left");
   }
 
   setAnimationState(animationState: PlayerState["animationState"]): void {

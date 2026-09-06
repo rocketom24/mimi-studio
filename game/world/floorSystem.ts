@@ -15,56 +15,121 @@ function floorQuad(x: number, y: number, w: number, h: number): Phaser.Types.Mat
   return [project(x, y), project(x + w, y), project(x + w, y + h), project(x, y + h)];
 }
 
-/** Subtle wood plank seams: one thin darker line per tile row. */
-function drawWoodPattern(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, base: number): void {
-  g.lineStyle(1, darken(base, 14), 0.35);
-  for (let ty = y + TILE_SIZE; ty < y + h; ty += TILE_SIZE) {
-    const a = project(x, ty);
-    const b = project(x + w, ty);
-    g.lineBetween(a.x, a.y, b.x, b.y);
-  }
+/** Deterministic pseudo-random in [0,1) from a position + seed — same trick as wallSystem's old brick jitter, so the garden's "random" detail is stable across re-renders/resizes instead of reshuffling every draw. */
+function grassHash(x: number, y: number, seed: number): number {
+  const s = Math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453;
+  return s - Math.floor(s);
 }
 
-/** Subtle tile grout grid. */
-function drawTilePattern(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, base: number): void {
-  g.lineStyle(1, lighten(base, 10), 0.3);
-  for (let tx = x + TILE_SIZE; tx < x + w; tx += TILE_SIZE) {
-    const a = project(tx, y);
-    const b = project(tx, y + h);
-    g.lineBetween(a.x, a.y, b.x, b.y);
-  }
-  for (let ty = y + TILE_SIZE; ty < y + h; ty += TILE_SIZE) {
-    const a = project(x, ty);
-    const b = project(x + w, ty);
-    g.lineBetween(a.x, a.y, b.x, b.y);
-  }
+/** Small color palette for the garden's flowers — cycled one color per flower. */
+const FLOWER_COLORS = [0xffffff, 0xffe066, 0xf78fb3];
+
+/**
+ * One grass blade as a filled (not stroked) triangle with a darker gusset
+ * near its base — a flat stroke reads as a scratch on the floor; a lit tip
+ * over a shadowed base reads as a blade standing up off the ground.
+ */
+function drawBlade(g: Phaser.GameObjects.Graphics, baseX: number, baseY: number, angle: number, len: number, colorBase: number): void {
+  const width = 1.6;
+  const dirX = Math.sin(angle);
+  const dirY = -Math.cos(angle);
+  const perpX = -dirY * (width / 2);
+  const perpY = dirX * (width / 2);
+  const tip = { x: baseX + dirX * len, y: baseY + dirY * len };
+  const bl = { x: baseX - perpX, y: baseY - perpY };
+  const br = { x: baseX + perpX, y: baseY + perpY };
+  const gusset = { x: baseX + dirX * len * 0.35, y: baseY + dirY * len * 0.35 };
+  g.fillStyle(lighten(colorBase, 14), 0.85);
+  g.fillPoints([bl, br, tip], true);
+  g.fillStyle(darken(colorBase, 16), 0.55);
+  g.fillPoints([bl, br, gusset], true);
 }
 
-/** Coarser slab seams for the workshop/game-room floor. */
-function drawWorkshopPattern(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, base: number): void {
-  const step = TILE_SIZE * 2;
-  g.lineStyle(1, darken(base, 18), 0.3);
-  for (let tx = x + step; tx < x + w; tx += step) {
-    const a = project(tx, y);
-    const b = project(tx, y + h);
-    g.lineBetween(a.x, a.y, b.x, b.y);
-  }
-  for (let ty = y + step; ty < y + h; ty += step) {
-    const a = project(x, ty);
-    const b = project(x + w, ty);
-    g.lineBetween(a.x, a.y, b.x, b.y);
-  }
+/**
+ * A pebble as a 3-layer ellipse stack (contact shadow, shaded body, corner
+ * highlight) instead of one flat dot — the same light-top/dark-base bevel
+ * logic drawBox uses for furniture-scale props, just small enough to read as
+ * a stone.
+ */
+function drawPebble(g: Phaser.GameObjects.Graphics, p: { x: number; y: number }, size: number, baseShade: number): void {
+  g.fillStyle(0x000000, 0.18);
+  g.fillEllipse(p.x + 0.6, p.y + 0.9, size * 1.15, size * 0.6);
+  g.fillStyle(darken(baseShade, 10), 0.9);
+  g.fillEllipse(p.x, p.y, size, size * 0.68);
+  g.fillStyle(lighten(baseShade, 32), 0.8);
+  g.fillEllipse(p.x - size * 0.2, p.y - size * 0.18, size * 0.42, size * 0.26);
 }
 
-/** Outdoor garden floor: sparse light blade flecks. Its outer (world-edge) sides get a dedicated fence-colored border — see drawGardenEdgeBorder — instead of a stroke here, so the edge shared with the house isn't double-lined. */
+/**
+ * A single flower head: ground shadow, 4 shaded-and-highlighted petals
+ * around a bright center — reads as one rounded bloom instead of a scatter
+ * of flat same-color dots.
+ */
+function drawFlower(g: Phaser.GameObjects.Graphics, p: { x: number; y: number }, color: number): void {
+  g.fillStyle(0x000000, 0.15);
+  g.fillEllipse(p.x + 0.5, p.y + 0.8, 4.4, 2.2);
+  for (let k = 0; k < 4; k++) {
+    const a = (Math.PI / 2) * k + Math.PI / 4;
+    const px = p.x + Math.cos(a) * 1.0;
+    const py = p.y + Math.sin(a) * 0.6;
+    g.fillStyle(darken(color, 10), 0.9);
+    g.fillEllipse(px, py, 2.3, 2.3);
+    g.fillStyle(lighten(color, 20), 0.85);
+    g.fillEllipse(px - 0.3, py - 0.3, 1.2, 1.2);
+  }
+  g.fillStyle(0xffd93d, 1);
+  g.fillEllipse(p.x, p.y, 1.6, 1.6);
+}
+
+/**
+ * Outdoor garden floor: dense grass tufts (3 shaded blades each, jittered
+ * off a grid so it doesn't read as a repeating pattern), a scatter of
+ * domed pebbles, and a few fixed flower heads — every prop layered with
+ * highlight/shadow shapes instead of one flat fill, so the garden reads as
+ * dimensional rather than a field of flat vector points. Its outer
+ * (world-edge) sides get a dedicated fence-colored border — see
+ * drawGardenEdgeBorder — instead of a stroke here, so the edge shared with
+ * the house isn't double-lined.
+ */
 function drawGrassPattern(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, base: number): void {
-  g.fillStyle(lighten(base, 14), 0.5);
-  for (let ty = y + TILE_SIZE / 2; ty < y + h; ty += TILE_SIZE) {
-    for (let tx = x + TILE_SIZE / 2; tx < x + w; tx += TILE_SIZE) {
-      const p = project(tx, ty);
-      g.fillRect(p.x - 1, p.y - 1, 2, 2);
+  const TUFT_SPACING = 7;
+  for (let ty = y + 3; ty < y + h; ty += TUFT_SPACING) {
+    for (let tx = x + 3; tx < x + w; tx += TUFT_SPACING) {
+      const jx = (grassHash(tx, ty, 1) - 0.5) * 4;
+      const jy = (grassHash(tx, ty, 2) - 0.5) * 4;
+      const anchor = project(tx + jx, ty + jy);
+      for (let b = 0; b < 3; b++) {
+        const angle = (grassHash(tx, ty, 3 + b) - 0.5) * 1.1 + (b - 1) * 0.35;
+        const len = 2.2 + grassHash(tx, ty, 6 + b) * 2.8;
+        const toneRoll = grassHash(tx, ty, 9 + b);
+        const color = toneRoll < 0.33 ? lighten(base, 18) : toneRoll < 0.66 ? lighten(base, 6) : darken(base, 10);
+        drawBlade(g, anchor.x, anchor.y, angle, len, color);
+      }
     }
   }
+
+  const PEBBLE_SPACING = 20;
+  for (let ty = y + 6; ty < y + h; ty += PEBBLE_SPACING) {
+    for (let tx = x + 6; tx < x + w; tx += PEBBLE_SPACING) {
+      if (grassHash(tx, ty, 10) > 0.55) continue;
+      const jx = (grassHash(tx, ty, 11) - 0.5) * 10;
+      const jy = (grassHash(tx, ty, 12) - 0.5) * 10;
+      const p = project(tx + jx, ty + jy);
+      const shade = grassHash(tx, ty, 13) < 0.5 ? 0x9c9488 : 0x77705f;
+      const size = 2 + grassHash(tx, ty, 14) * 1.4;
+      drawPebble(g, p, size, shade);
+    }
+  }
+
+  const clusters: Array<[number, number]> = [
+    [0.2, 0.3],
+    [0.62, 0.55],
+    [0.4, 0.78],
+  ];
+  clusters.forEach(([fx, fy], i) => {
+    const p = project(x + fx * w, y + fy * h);
+    drawFlower(g, p, FLOWER_COLORS[i % FLOWER_COLORS.length]);
+  });
 }
 
 /**
@@ -287,15 +352,29 @@ function reopenEdges(raw: PixelRect, clamped: PixelRect): PixelRect {
   return { x, y, w, h };
 }
 
-/** Draws one merged floor rect: fill, then the room's plank/grout/slab pattern within that rect's own bounds. */
+/** Spacing (world px) between drawn plank-seam lines — see drawFloorRect. 3 tiles reads as generously wide floorboards, not a repeating grid. */
+const PLANK_SPACING_PX = TILE_SIZE * 3;
+
+/**
+ * Draws one merged floor rect as a flat, single-color fill with a few long
+ * plank-seam lines running its full width — real wood grain feel with zero
+ * repetition (unlike a tiled texture image, a line spanning the whole rect
+ * can never show a seam or grid). Grass keeps its own procedural pattern;
+ * it's outdoor ground, not a planked floor.
+ */
 function drawFloorRect(g: Phaser.GameObjects.Graphics, rect: PixelRect, room: RoomDef): void {
   g.fillStyle(room.floorColor, 1);
   g.fillPoints(floorQuad(rect.x, rect.y, rect.w, rect.h), true);
-
-  if (room.floorType === "wood") drawWoodPattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
-  else if (room.floorType === "tile") drawTilePattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
-  else if (room.floorType === "grass") drawGrassPattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
-  else drawWorkshopPattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
+  if (room.floorType === "grass") {
+    drawGrassPattern(g, rect.x, rect.y, rect.w, rect.h, room.floorColor);
+    return;
+  }
+  g.lineStyle(1, darken(room.floorColor, 22), 0.35);
+  for (let y = rect.y + PLANK_SPACING_PX; y < rect.y + rect.h; y += PLANK_SPACING_PX) {
+    const a = project(rect.x, y);
+    const b = project(rect.x + rect.w, y);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
 }
 
 /**
@@ -314,28 +393,32 @@ function drawFloorRect(g: Phaser.GameObjects.Graphics, rect: PixelRect, room: Ro
  * against (see wallSystem's clampToHouseBorder) — otherwise the outer ring
  * tile's far half rendered as floor visibly outside the walls.
  */
-export function createHouseFloor(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
-  const g = scene.add.graphics().setDepth(DEPTH.FLOOR);
+export function createHouseFloor(scene: Phaser.Scene): Phaser.GameObjects.GameObject[] {
+  const objects: Phaser.GameObjects.GameObject[] = [];
   const wallGrid = buildWallGrid();
+  const owner = assignFloorOwners();
 
-  for (const { roomIndex, rect } of ownerGridToRects(assignFloorOwners())) {
+  const gBase = scene.add.graphics().setDepth(DEPTH.FLOOR);
+  for (const { roomIndex, rect } of ownerGridToRects(owner)) {
     const neighborClipped = alignToWallCenterline(rect, wallGrid);
     const clipped = reopenEdges(rect, clampToHouseBorder(neighborClipped));
     if (clipped.w <= 0 || clipped.h <= 0) continue;
-    drawFloorRect(g, clipped, ROOMS[roomIndex]);
+    drawFloorRect(gBase, clipped, ROOMS[roomIndex]);
   }
+  objects.push(gBase);
 
+  const gTop = scene.add.graphics().setDepth(DEPTH.FLOOR + 0.02);
   for (const room of ROOMS) {
     const x = px(room.tiles.x);
     const y = px(room.tiles.y);
     const w = px(room.tiles.w);
-    g.fillStyle(0x000000, 0.16);
-    g.fillPoints([project(x, y), project(x + w, y), project(x + w, y + 2), project(x, y + 2)], true);
+    gTop.fillStyle(0x000000, 0.16);
+    gTop.fillPoints([project(x, y), project(x + w, y), project(x + w, y + 2), project(x, y + 2)], true);
   }
-
   for (const room of ROOMS) {
-    if (room.floorType === "grass") drawGardenEdgeBorder(g, room);
+    if (room.floorType === "grass") drawGardenEdgeBorder(gTop, room);
   }
+  objects.push(gTop);
 
-  return g;
+  return objects;
 }

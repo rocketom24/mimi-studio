@@ -15,9 +15,14 @@ export function createGameConfig(
     parent,
     width: parent.clientWidth || FALLBACK_WIDTH,
     height: parent.clientHeight || FALLBACK_HEIGHT,
-    pixelArt: true,
-    antialias: false,
-    backgroundColor: "#2b1a12",
+    // Every wall/brick/character is vector-drawn Graphics, and furniture art
+    // is photoreal images (see furnitureEditor.ts) — there's no actual
+    // pixel-art content here that needs nearest-neighbor filtering, so
+    // pixelArt's forced antialias:false was just making every diagonal wall
+    // and brick edge look jagged for nothing.
+    pixelArt: false,
+    antialias: true,
+    backgroundColor: "#4d3627",
     physics: {
       default: "arcade",
       arcade: {
