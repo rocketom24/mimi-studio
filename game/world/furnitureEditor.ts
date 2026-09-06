@@ -26,31 +26,17 @@ const STORAGE_KEY = "mimi-studio:furnitureEditor:v1";
  * when one exists, so it stays purely a fallback.
  */
 const DEFAULT_ITEMS: FurnitureEditorItem[] = [
-  { id: "sofa-removebg-preview-1788435297019-407587", kind: "sofa-removebg-preview", x: 116.16972875104216, y: 167.21366566758542, rotation: 0, scale: 1 },
-  { id: "tv-removebg-preview-1788435302309-827849", kind: "tv-removebg-preview", x: 67.00226076926154, y: 166.50160588021964, rotation: 0, scale: 1.4000000000000004 },
-  { id: "pc-1788435327182-565160", kind: "pc", x: 326.01557802736977, y: 53.369505057010144, rotation: 0, scale: 1.1 },
-  { id: "chair-1788435337352-491020", kind: "chair", x: 360.31602181570827, y: 35.17984357222838, rotation: 0, scale: 1 },
+  { id: "sofa-removebg-preview-1788435297019-407587", kind: "sofa-removebg-preview", x: 121.54874349969528, y: 189.39193515959693, rotation: 0, scale: 1.15 },
+  { id: "tv-removebg-preview-1788435302309-827849", kind: "tv-removebg-preview", x: 57.28, y: 166.50160588021964, rotation: 0, scale: 1.0 },
+  { id: "pc-1788435327182-565160", kind: "pc", x: 326.01557802736977, y: 53.369505057010144, rotation: 0, scale: 1.55 },
   { id: "plant-2-1788435346761-645199", kind: "plant-2", x: 228.25380368821445, y: 326.31924696364104, rotation: 0, scale: 1.1 },
   { id: "plant-2-1788435354439-163005", kind: "plant-2", x: 370.7812568587184, y: 226.72092563027843, rotation: 0, scale: 1 },
-  { id: "centertable-removebg-preview-1788435415150-773159", kind: "centertable-removebg-preview", x: 68.47186057927101, y: 150.5948677043754, rotation: 0, scale: 1 },
   { id: "bookshelf-removebg-preview-1788439324357-786572", kind: "bookshelf-removebg-preview", x: 263.84823211640673, y: 60.47777521344918, rotation: 0, scale: 1.2000000000000002 },
-  { id: "almirah-removebg-preview-1788439329424-82462", kind: "almirah-removebg-preview", x: 257.8257523343151, y: 218.32743324133435, rotation: 0, scale: 1 },
-  { id: "dressing-table-removebg-preview-1788439337469-573029", kind: "dressing-table-removebg-preview", x: 258.4851651046857, y: 180.54928434014008, rotation: 0, scale: 1 },
-  { id: "mirror-removebg-preview (1)-1788439343555-29770", kind: "mirror-removebg-preview (1)", x: 236.82220701869514, y: 161.10716315055296, rotation: 0, scale: 1 },
-  { id: "kitchen-removebg-preview-1788439355165-835245", kind: "kitchen-removebg-preview", x: 145.99844927391527, y: 54.55247722383828, rotation: 0, scale: 1.2000000000000002 },
-  { id: "fridge-removebg-preview-1788439379412-137200", kind: "fridge-removebg-preview", x: 119.32827899606988, y: 83.77647937408935, rotation: 0, scale: 1.1 },
-  { id: "sink-removebg-preview-1788452301324-233947", kind: "sink-removebg-preview", x: 190.301439477266, y: 40.0742969400242, rotation: 0, scale: 0.9 },
-  { id: "corner-sofa-removebg-preview-1788519967349-955190", kind: "corner-sofa-removebg-preview", x: 81.20144404842917, y: 78.40045855880147, rotation: 0, scale: 1.9000000000000008 },
-  // Dining set (table + 2 chairs) shifted +26 world-px east as a group from
-  // their original placement — that placement sat flush against the sofa's
-  // back with zero gap, walling off the only north-south walkway through the
-  // living room's middle (corner sofa to sofa-back/dining area) except a
-  // hairline sliver by the east wall. +26 opens a real ~14px corridor
-  // between the sofa and the table without touching the east wall/door.
-  { id: "dining2-removebg-preview-1788520014798-709680", kind: "dining2-removebg-preview", x: 196.22571267987126, y: 153.64045391467715, rotation: 0, scale: 1.5000000000000004 },
-  { id: "dchair1-removebg-preview-1788520027198-939327", kind: "dchair1-removebg-preview", x: 207.622813451182, y: 153.4841628150772, rotation: 0, scale: 1 },
-  { id: "dchair2-removebg-preview-1788520054888-988971", kind: "dchair2-removebg-preview", x: 181.73968022638206, y: 147.73920407115997, rotation: 0, scale: 0.8 },
-  { id: "bed2-removebg-preview-1788520080187-821975", kind: "bed2-removebg-preview", x: 344.11922403785195, y: 238.25562477106584, rotation: 0, scale: 2.6000000000000014 },
+  { id: "almirah-removebg-preview-1788439329424-82462", kind: "almirah-removebg-preview", x: 257.8257523343151, y: 218.32743324133435, rotation: 0, scale: 1.15 },
+  { id: "dressing-table-removebg-preview-1788439337469-573029", kind: "dressing-table-removebg-preview", x: 263.1274144908024, y: 172.49913965197823, rotation: 0, scale: 1.1 },
+  { id: "mirror-removebg-preview (1)-1788439343555-29770", kind: "mirror-removebg-preview (1)", x: 219, y: 138.9801853957734, rotation: 0, scale: 1 },
+  { id: "kitchen-set-1788600000000-100000", kind: "kitchen-set", x: 58.54928389333266, y: 54.76748994337332, rotation: 0, scale: 1.7500000000000002 },
+  { id: "bed2-removebg-preview-1788520080187-821975", kind: "bed2-removebg-preview", x: 344.11922403785195, y: 238.25562477106584, rotation: 0, scale: 3.5 },
   { id: "grass-1-removebg-preview-1788520107890-620936", kind: "grass-1-removebg-preview", x: 269.45315256472645, y: 263.69447089655114, rotation: 0, scale: 1.4000000000000004 },
   { id: "clock-removebg-preview-1788520126643-915563", kind: "clock-removebg-preview", x: 263.3703092686799, y: 93.47168240958712, rotation: 0, scale: 1 },
   { id: "g2-removebg-preview-1788523358555-676430", kind: "g2-removebg-preview", x: 362.90576655372377, y: 310.53873070833754, rotation: 0, scale: 2.300000000000001 },
@@ -75,13 +61,16 @@ const FOOTPRINT_WIDTH_TRIM = 0.95;
 const FOOTPRINT_DEPTH_RATIO = 0.5;
 const FOOTPRINT_DEPTH_RATIO_BY_KIND: Record<string, number> = {
   tv: 0.16,
-  kitchen: 0.22,
-  fridge: 0.3,
-  sink: 0.28,
   bookshelf: 0.3,
   mirror: 0.12,
   "dressing-table": 0.3,
   almirah: 0.35,
+  // Generic front-anchored box, deliberately generous (see
+  // extendFootprintToCorner below, which stretches it the rest of the way to
+  // both walls) — kitchen-set.png is an L-shaped corner unit, not a simple
+  // rectangle, so an exact measured footprint isn't worth chasing; this just
+  // needs to fully cover the cabinet run without reaching into the walkway.
+  "kitchen-set": 0.6,
 };
 
 function footprintDepthRatio(kind: string): number {
@@ -89,28 +78,31 @@ function footprintDepthRatio(kind: string): number {
 }
 
 /**
- * Kitchen counter-run pieces (kitchen/fridge/sink) are fixed flush against
- * the room's north wall, not free-standing — but their footprint depth (see
- * FOOTPRINT_DEPTH_RATIO_BY_KIND) is only a shallow strip centered on the
- * sprite's front floor-contact point. That leaves the strip short of the
- * wall behind it, an uncollided gap Mimi can walk into and read as standing
- * inside/behind the counter. extendFootprintToBackWall stretches the rect's
- * north edge to the room's actual wall face so the footprint runs unbroken
- * from the wall to the counter's own front edge.
+ * kitchen-set is fixed flush against the room's corner (both the north and
+ * west walls), not free-standing — but its footprint depth (see
+ * MEASURED_FOOTPRINTS) is only a shallow strip centered on the sprite's front
+ * floor-contact point. That leaves the strip short of the walls behind it, an
+ * uncollided gap Mimi can walk into and read as standing inside/behind the
+ * cabinets. extendFootprintToCorner stretches the rect's north and west edges
+ * out to the room's actual wall faces so the footprint runs unbroken from
+ * both walls to the counter's own front edges.
  */
-const BACK_WALL_KITCHEN_KINDS = new Set(["kitchen", "fridge", "sink"]);
+const BACK_WALL_CORNER_KINDS = new Set(["kitchen-set"]);
 
-function extendFootprintToBackWall(
+function extendFootprintToCorner(
   rect: { x: number; y: number; w: number; h: number },
   kind: string,
 ): { x: number; y: number; w: number; h: number } {
-  if (!BACK_WALL_KITCHEN_KINDS.has(canonicalKind(kind))) return rect;
+  if (!BACK_WALL_CORNER_KINDS.has(canonicalKind(kind))) return rect;
   const bounds = roomBoundsAt(rect.x + rect.w / 2, rect.y + rect.h / 2);
   if (!bounds) return rect;
-  const wallFace = bounds.y0 - WALL_THICKNESS_PAD_PX;
+  const wallFaceY = bounds.y0 - WALL_THICKNESS_PAD_PX;
+  const wallFaceX = bounds.x0 - WALL_THICKNESS_PAD_PX;
   const southEdge = rect.y + rect.h;
-  if (wallFace >= southEdge) return rect;
-  return { ...rect, y: wallFace, h: southEdge - wallFace };
+  const eastEdge = rect.x + rect.w;
+  const y = Math.min(rect.y, wallFaceY);
+  const x = Math.min(rect.x, wallFaceX);
+  return { x, y, w: eastEdge - x, h: southEdge - y };
 }
 
 /**
@@ -163,9 +155,6 @@ const MEASURED_FOOTPRINTS: Partial<Record<string, MeasuredFootprint>> = {
   bookshelf: { depthFrac: 0.21512, lengthFrac: 0.71707, offsetXFrac: -0.54722, offsetYFrac: -0.65496 },
   almirah: { depthFrac: 0.36966, lengthFrac: 1.05616, offsetXFrac: -0.55428, offsetYFrac: -0.35408 },
   "dressing-table": { depthFrac: 0.28424, lengthFrac: 0.94748, offsetXFrac: -0.84841, offsetYFrac: -0.84589 },
-  fridge: { depthFrac: 0.27461, lengthFrac: 0.91537, offsetXFrac: -0.38373, offsetYFrac: -0.26957 },
-  kitchen: { depthFrac: 0.84111, lengthFrac: 0.18504, offsetXFrac: -0.52321, offsetYFrac: -0.62586 },
-  sink: { depthFrac: 0.23029, lengthFrac: 0.82246, offsetXFrac: -1.7814, offsetYFrac: -1.45524 },
   // Earlier pass picked a bad "back corner" point for the desk's depth,
   // wildly overshooting past the desk's own footprint into the open floor
   // Mimi walks through in front of it — confirmed by rendering it over the
@@ -188,24 +177,11 @@ const MEASURED_FOOTPRINTS: Partial<Record<string, MeasuredFootprint>> = {
   bed2: { depthFrac: 0.90064, lengthFrac: 0.93927, offsetXFrac: -0.65179, offsetYFrac: -0.59988 },
   clock: { depthFrac: 0.28775, lengthFrac: 0.71939, offsetXFrac: -0.5401, offsetYFrac: -0.61336 },
   "grass-1": { depthFrac: 0.58295, lengthFrac: 1.21074, offsetXFrac: -0.41599, offsetYFrac: -0.06084 },
-  // corner-sofa.png and garden-sofa.png are each a whole seating-nook GROUP
-  // (2-3 chairs + a table, sometimes a plant), not one object — no single
-  // rectangle is their "exact physical base." Footprint covers the group's
-  // outer extent so Mimi can't cut through the middle of the nook.
-  "corner-sofa": { depthFrac: 0.61854, lengthFrac: 1.6653, offsetXFrac: -1.06094, offsetYFrac: -0.54788 },
+  // garden-sofa.png is a whole seating-nook GROUP (2-3 chairs + a table,
+  // sometimes a plant), not one object — no single rectangle is its "exact
+  // physical base." Footprint covers the group's outer extent so Mimi can't
+  // cut through the middle of the nook.
   g2: { depthFrac: 0.75684, lengthFrac: 1.41193, offsetXFrac: -0.62864, offsetYFrac: -0.35983 },
-  // Table + 2 chairs as one group, same reasoning as corner-sofa/g2 above.
-  // dchair1/dchair2 are separate placed items in this same small nook
-  // (their anchors sit within ~25 world px of dining2's, well inside this
-  // footprint), so their own generic-model boxes stay harmlessly redundant
-  // with this one rather than needed for coverage.
-  //
-  // Earlier pass picked a bad 3rd point completing this as a parallelogram,
-  // which (like pc below) overshot past the table's own footprint into the
-  // walkway beside it — confirmed by rendering it over the live scene.
-  // Redone from the table's actual front-leg span + a table-depth ratio
-  // (0.55) instead of a mismeasured 3rd corner.
-  dining2: { depthFrac: 0.40353, lengthFrac: 0.73369, offsetXFrac: -0.65033, offsetYFrac: -0.45291 },
 };
 
 /**
@@ -292,7 +268,7 @@ function computeFootprintRect(item: PlacedItem): { x: number; y: number; w: numb
   const centerX = item.x + local.offsetX * cos - local.offsetY * sin;
   const centerY = item.y + local.offsetX * sin + local.offsetY * cos;
   const rect = rotateRectAABB(centerX, centerY, local.width, local.depth, item.rotation);
-  return extendFootprintToBackWall(rect, item.kind);
+  return extendFootprintToCorner(rect, item.kind);
 }
 
 const ROTATE_STEP_DEG = 45;
@@ -303,13 +279,6 @@ const SELECTED_TINT = 0x8fd0ff;
 
 /** Fallback display width (tiles) for a PNG with no entry below — e.g. a new asset just dropped into public/furniture/. */
 const DEFAULT_DISPLAY_WIDTH_TILES = 2;
-
-/**
- * kitchen.png's own target width (tiles) — pulled out as a named constant
- * because fridge/sink below derive their own size from it (see their
- * comments) rather than each picking an independent number.
- */
-const KITCHEN_WIDTH_TILES = 3.55; // max width that stays clear of the back wall (WALL_HEIGHT_PX, see wallSystem.ts) — bigger clips it, confirmed by screenshot
 
 /**
  * Realistic display width (tiles) per furniture kind, keyed by the PNG's
@@ -326,25 +295,6 @@ const BASE_WIDTH_TILES: Record<string, number> = {
   tv: 4.8, // long console + floor speakers spans further than the sofa in-frame
   centertable: 2.2,
   dining: 3.1,
-  kitchen: KITCHEN_WIDTH_TILES,
-  // kitchen.png and fridge.png are the same real-world camera scale (checked
-  // against each corner's own raw-pixel floor-to-top span: ~251px counter
-  // height in kitchen.png, ~500px full-height in fridge.png, ratio matches a
-  // real ~90cm counter vs ~180cm fridge) — fridge's width is KITCHEN_WIDTH_TILES'
-  // own per-raw-pixel scale applied to fridge's 418px width, scaled down
-  // 0.82x from that exact ratio per feedback that the 1:1 match still read
-  // as too big next to the counter run.
-  fridge: KITCHEN_WIDTH_TILES * (418 / 566) * 0.82,
-  // Tried literal equal width first (matching the direct request) and
-  // screenshotted kitchen.png next to sink.png at that size — sink stood
-  // visibly taller than the counter top and poked above the wall, reading
-  // as two mismatched objects, not "one kitchen countertop." Its actual
-  // counter-to-cabinet-door seam sits at a different fraction of its own
-  // frame than kitchen.png's (sampled both PNGs' pixel colors directly:
-  // kitchen's seam ~y203 of its ~217px cabinet-to-floor span, sink's ~y191
-  // of its ~375px span) — scaled here so that seam lines up with kitchen's
-  // instead, which is what actually reads as one continuous counter.
-  sink: KITCHEN_WIDTH_TILES * 0.431,
   bed: 4.0,
   almirah: 2.4,
   bookshelf: 2.2,
@@ -359,12 +309,16 @@ const BASE_WIDTH_TILES: Record<string, number> = {
   cattree: 2.0,
   cattoy: 0.6,
   catlitterbox: 1.6,
+  "kitchen-set": 4.0,
 };
 
 function baseDisplayWidth(kind: string): number {
   const tiles = BASE_WIDTH_TILES[canonicalKind(kind)] ?? DEFAULT_DISPLAY_WIDTH_TILES;
   return tiles * TILE_SIZE;
 }
+
+/** Photoreal renders whose fine detail (wood grain, mesh, bezel lines) reads as noisy aliasing under the global pixelArt renderer's nearest-neighbor scaling — see spawn(). */
+const LINEAR_FILTER_KINDS = new Set(["pc", "bed2", "almirah", "dressing-table"]);
 
 /**
  * Vertical origin fraction (0=image top, 1=image bottom) for kinds whose PNG
@@ -376,9 +330,8 @@ function baseDisplayWidth(kind: string): number {
  * entry; everything else keeps the plain bottom anchor.
  */
 const ORIGIN_Y_BY_KIND: Record<string, number> = {
-  kitchen: 420 / 441, // alpha bbox bottom at y=420 of 441
-  fridge: 541 / 596, // alpha bbox bottom at y=541 of 596
-  sink: 566 / 592, // alpha bbox bottom at y=566 of 592
+  "kitchen-set": 369 / 500, // alpha bbox bottom at y=369 of 500
+  pc: 786 / 1024, // alpha bbox bottom at y=786 of 1024
 };
 
 function originYFor(kind: string): number {
@@ -522,6 +475,12 @@ export class FurnitureEditor {
   private spawn(data: FurnitureEditorItem): void {
     const anchor = project(data.x, data.y);
     const image = this.scene.add.image(anchor.x, anchor.y, resolveEditorTextureKey(data.kind)).setOrigin(0.5, originYFor(data.kind));
+    // These are high-detail photoreal renders (fine mesh/wood-grain/bezel lines), unlike
+    // the game's flatter-shaded furniture — the global pixelArt renderer's nearest-neighbor
+    // scaling turns that detail into noisy aliasing. Smooth just these textures.
+    if (LINEAR_FILTER_KINDS.has(canonicalKind(data.kind))) {
+      image.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+    }
     const baseScale = this.applyScale(image, data.kind, data.scale);
     image.setAngle(data.rotation);
     image.setDepth(visualDepth(data.y));
