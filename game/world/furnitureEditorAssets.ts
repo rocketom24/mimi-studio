@@ -5,17 +5,21 @@ import type * as Phaser from "phaser";
  * (see game/world/furnitureEditor.ts). Deliberately separate from
  * furnitureSystem.ts's SPRITE_PATH/spriteTextureKey — those stay closed over
  * the fixed FurnitureKind union for production rendering; the editor instead
- * takes whatever filenames app/page.tsx found in public/furniture/ at
- * render time, so adding a new PNG never requires touching either module.
+ * takes whatever filenames app/page.tsx found in public/assets/game/furniture/
+ * at render time, so adding a new PNG never requires touching either module.
+ *
+ * Type-only Phaser import — this module is also imported by the (server-side,
+ * Phaser-free) furniture-layout API route, so it must never pull in a Phaser
+ * value import.
  */
 
-/** Phaser registry key GameCanvas sets (before the scene's preload phase) and StudioScene.preload() reads, carrying the server-discovered public/furniture/ filenames across the React/Phaser boundary. */
+/** Phaser registry key GameCanvas sets (before the scene's preload phase) and StudioScene.preload() reads, carrying the server-discovered public/assets/game/furniture/ filenames across the React/Phaser boundary. */
 export const FURNITURE_ASSET_FILES_REGISTRY_KEY = "furnitureAssetFiles";
 
-/** Strips a file extension, e.g. "catBed.png" -> "catBed". Used as the editor's item-kind identifier. */
+/** Strips a file extension, e.g. "catBed.png" -> "catBed", and trims stray whitespace some exported filenames carry (e.g. "kitchen .png") so it never leaks into the editor's item-kind identifier. */
 export function fileStem(filename: string): string {
   const dot = filename.lastIndexOf(".");
-  return dot === -1 ? filename : filename.slice(0, dot);
+  return (dot === -1 ? filename : filename.slice(0, dot)).trim();
 }
 
 export function editorTextureKey(stem: string): string {
@@ -42,7 +46,6 @@ export function canonicalKind(kind: string): string {
 const RENAMED_STEMS: Record<string, string> = {
   almirah: "almari",
   "dressing-table": "dressingtable",
-  kitchen: "kitchen1",
   "grass-1": "grass1",
   g2: "garden-sofa",
 };
@@ -56,6 +59,48 @@ export function resolveEditorTextureKey(kind: string): string {
 /** Loads every discovered furniture PNG under its own editor texture key. Call once from the scene's preload(). */
 export function preloadEditorFurnitureSprites(scene: Phaser.Scene, filenames: readonly string[]): void {
   for (const filename of filenames) {
-    scene.load.image(editorTextureKey(fileStem(filename)), `/furniture/${filename}`);
+    scene.load.image(editorTextureKey(fileStem(filename)), `/assets/game/furniture/${filename}`);
   }
+}
+
+/** One furniture piece placed via the editor, as persisted to game/data/furnitureLayout.json. Shared between the client editor (furnitureEditor.ts) and the server-side save route (app/api/furniture-layout/route.ts). */
+export interface FurnitureEditorItem {
+  id: string;
+  /** File stem of a public/assets/game/furniture/ PNG (e.g. "catBed") — see fileStem() above. Not tied to the production FurnitureKind union, so any PNG dropped in that folder works with no code change. */
+  kind: string;
+  x: number;
+  y: number;
+  rotation: number;
+  scale: number;
+}
+
+export function isFurnitureEditorItem(value: unknown): value is FurnitureEditorItem {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === "string" &&
+    typeof v.kind === "string" &&
+    typeof v.x === "number" &&
+    typeof v.y === "number" &&
+    typeof v.rotation === "number" &&
+    typeof v.scale === "number"
+  );
+}
+
+/**
+ * Resize bounds/step for a placed item's scale — shared by furnitureEditor.ts
+ * (wheel-resize, setSelectedScale) and the sidebar's resize slider. Kept here
+ * rather than in furnitureEditor.ts so the sidebar (statically imported by
+ * GameCanvas) never pulls in that module's `import * as Phaser`, which would
+ * defeat GameCanvas's dynamic `import("phaser")`.
+ */
+export const SCALE_STEP = 0.1;
+export const SCALE_MIN = 0.3;
+export const SCALE_MAX = 3;
+
+/** One placed item's identity + current size, as surfaced to React for the sidebar's resize slider — see FurnitureEditor.onSelectionChange. */
+export interface FurnitureSelection {
+  id: string;
+  kind: string;
+  scale: number;
 }

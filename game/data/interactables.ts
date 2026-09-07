@@ -28,7 +28,7 @@ export const INTERACTABLES: Interactable[] = [
   {
     id: "about",
     // Was local (3, 8) — sat inside the TV/centertable collision footprints
-    // (see furnitureEditor.ts DEFAULT_ITEMS), so no reachable floor point
+    // (see game/data/furnitureLayout.json), so no reachable floor point
     // fell within INTERACTION_RADIUS of it. Moved 2 tiles south, in front
     // of the sofa, onto open floor.
     ...roomPoint("living-room", 3, 10),

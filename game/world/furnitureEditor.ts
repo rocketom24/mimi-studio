@@ -1,47 +1,24 @@
 import * as Phaser from "phaser";
 import { project, unproject } from "@/game/world/projection";
 import { visualDepth } from "@/game/world/depth";
-import { canonicalKind, resolveEditorTextureKey } from "@/game/world/furnitureEditorAssets";
+import {
+  canonicalKind,
+  resolveEditorTextureKey,
+  isFurnitureEditorItem,
+  SCALE_STEP,
+  SCALE_MIN,
+  SCALE_MAX,
+  type FurnitureEditorItem,
+  type FurnitureSelection,
+} from "@/game/world/furnitureEditorAssets";
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import { WALL_THICKNESS_PAD_PX } from "@/game/world/wallSystem";
+import defaultLayout from "@/game/data/furnitureLayout.json";
 
-export interface FurnitureEditorItem {
-  id: string;
-  /** File stem of a public/furniture/ PNG (e.g. "catBed") — see furnitureEditorAssets.ts. Not tied to the production FurnitureKind union, so any PNG dropped in that folder works with no code change. */
-  kind: string;
-  x: number;
-  y: number;
-  rotation: number;
-  scale: number;
-}
+export type { FurnitureEditorItem };
 
-const STORAGE_KEY = "mimi-studio:furnitureEditor:v1";
-
-/**
- * Baked-in snapshot of the last layout saved from the browser (editor's
- * "Save layout" button, localStorage key above) — the permanent baseline so
- * every build shows this furniture even with no localStorage entry (fresh
- * browser, production). load() prefers a real localStorage save over this
- * when one exists, so it stays purely a fallback.
- */
-const DEFAULT_ITEMS: FurnitureEditorItem[] = [
-  { id: "sofa-removebg-preview-1788435297019-407587", kind: "sofa-removebg-preview", x: 121.54874349969528, y: 189.39193515959693, rotation: 0, scale: 1.15 },
-  { id: "tv-removebg-preview-1788435302309-827849", kind: "tv-removebg-preview", x: 57.28, y: 166.50160588021964, rotation: 0, scale: 1.0 },
-  { id: "pc-1788435327182-565160", kind: "pc", x: 326.01557802736977, y: 53.369505057010144, rotation: 0, scale: 1.55 },
-  { id: "plant-2-1788435346761-645199", kind: "plant-2", x: 228.25380368821445, y: 326.31924696364104, rotation: 0, scale: 1.1 },
-  { id: "plant-2-1788435354439-163005", kind: "plant-2", x: 370.7812568587184, y: 226.72092563027843, rotation: 0, scale: 1 },
-  { id: "bookshelf-removebg-preview-1788439324357-786572", kind: "bookshelf-removebg-preview", x: 263.84823211640673, y: 60.47777521344918, rotation: 0, scale: 1.2000000000000002 },
-  { id: "almirah-removebg-preview-1788439329424-82462", kind: "almirah-removebg-preview", x: 257.8257523343151, y: 218.32743324133435, rotation: 0, scale: 1.15 },
-  { id: "dressing-table-removebg-preview-1788439337469-573029", kind: "dressing-table-removebg-preview", x: 263.1274144908024, y: 172.49913965197823, rotation: 0, scale: 1.1 },
-  { id: "mirror-removebg-preview (1)-1788439343555-29770", kind: "mirror-removebg-preview (1)", x: 219, y: 138.9801853957734, rotation: 0, scale: 1 },
-  { id: "kitchen-set-1788600000000-100000", kind: "kitchen-set", x: 58.54928389333266, y: 54.76748994337332, rotation: 0, scale: 1.7500000000000002 },
-  { id: "bed2-removebg-preview-1788520080187-821975", kind: "bed2-removebg-preview", x: 344.11922403785195, y: 238.25562477106584, rotation: 0, scale: 3.5 },
-  { id: "grass-1-removebg-preview-1788520107890-620936", kind: "grass-1-removebg-preview", x: 269.45315256472645, y: 263.69447089655114, rotation: 0, scale: 1.4000000000000004 },
-  { id: "clock-removebg-preview-1788520126643-915563", kind: "clock-removebg-preview", x: 263.3703092686799, y: 93.47168240958712, rotation: 0, scale: 1 },
-  { id: "g2-removebg-preview-1788523358555-676430", kind: "g2-removebg-preview", x: 362.90576655372377, y: 310.53873070833754, rotation: 0, scale: 2.300000000000001 },
-  { id: "plant-1-1788523450903-256618", kind: "plant-1", x: 134.48392646192693, y: 322.56028302761445, rotation: 0, scale: 1 },
-];
+const SAVE_ENDPOINT = "/api/furniture-layout";
 
 /**
  * Minimal clearance trimmed off a footprint's authored width so Mimi doesn't
@@ -67,10 +44,10 @@ const FOOTPRINT_DEPTH_RATIO_BY_KIND: Record<string, number> = {
   almirah: 0.35,
   // Generic front-anchored box, deliberately generous (see
   // extendFootprintToCorner below, which stretches it the rest of the way to
-  // both walls) — kitchen-set.png is an L-shaped corner unit, not a simple
+  // both walls) — kitchen.png is an L-shaped corner unit, not a simple
   // rectangle, so an exact measured footprint isn't worth chasing; this just
   // needs to fully cover the cabinet run without reaching into the walkway.
-  "kitchen-set": 0.6,
+  kitchen: 0.6,
 };
 
 function footprintDepthRatio(kind: string): number {
@@ -78,7 +55,7 @@ function footprintDepthRatio(kind: string): number {
 }
 
 /**
- * kitchen-set is fixed flush against the room's corner (both the north and
+ * kitchen is fixed flush against the room's corner (both the north and
  * west walls), not free-standing — but its footprint depth (see
  * MEASURED_FOOTPRINTS) is only a shallow strip centered on the sprite's front
  * floor-contact point. That leaves the strip short of the walls behind it, an
@@ -87,7 +64,7 @@ function footprintDepthRatio(kind: string): number {
  * out to the room's actual wall faces so the footprint runs unbroken from
  * both walls to the counter's own front edges.
  */
-const BACK_WALL_CORNER_KINDS = new Set(["kitchen-set"]);
+const BACK_WALL_CORNER_KINDS = new Set(["kitchen"]);
 
 function extendFootprintToCorner(
   rect: { x: number; y: number; w: number; h: number },
@@ -272,9 +249,6 @@ function computeFootprintRect(item: PlacedItem): { x: number; y: number; w: numb
 }
 
 const ROTATE_STEP_DEG = 45;
-const SCALE_STEP = 0.1;
-const SCALE_MIN = 0.3;
-const SCALE_MAX = 3;
 const SELECTED_TINT = 0x8fd0ff;
 
 /** Fallback display width (tiles) for a PNG with no entry below — e.g. a new asset just dropped into public/furniture/. */
@@ -309,7 +283,7 @@ const BASE_WIDTH_TILES: Record<string, number> = {
   cattree: 2.0,
   cattoy: 0.6,
   catlitterbox: 1.6,
-  "kitchen-set": 4.0,
+  kitchen: 4.4,
 };
 
 function baseDisplayWidth(kind: string): number {
@@ -330,7 +304,7 @@ const LINEAR_FILTER_KINDS = new Set(["pc", "bed2", "almirah", "dressing-table"])
  * entry; everything else keeps the plain bottom anchor.
  */
 const ORIGIN_Y_BY_KIND: Record<string, number> = {
-  "kitchen-set": 369 / 500, // alpha bbox bottom at y=369 of 500
+  kitchen: 369 / 500, // alpha bbox bottom at y=369 of 500
   pc: 786 / 1024, // alpha bbox bottom at y=786 of 1024
 };
 
@@ -378,11 +352,12 @@ interface PlacedItem extends FurnitureEditorItem {
 /**
  * Furniture placement layer, fully additive on top of the game's hardcoded
  * room furniture (rooms.ts/furnitureSystem.ts) — it never reads or writes
- * that data, only adds its own sprites on top. Its layout (DEFAULT_ITEMS,
- * or a localStorage save on top of it) always spawns; only the drag/edit
- * tooling itself is dev-only (gated by `active`, see setActive/GameCanvas.tsx).
- * collision.ts reads collisionRects() below once, right after load(), to
- * turn every spawned item's rendered footprint into solid physics geometry.
+ * that data, only adds its own sprites on top. Its layout (game/data/
+ * furnitureLayout.json, the project's default) always spawns; only the
+ * drag/edit tooling itself is dev-only (gated by `active`, see
+ * setActive/GameCanvas.tsx). collision.ts reads collisionRects() below once,
+ * right after load(), to turn every spawned item's rendered footprint into
+ * solid physics geometry.
  *
  * ponytail: no drop shadow under editor-placed items (existing furnitureSystem
  * pieces get one via a separate Graphics object kept in sync on every
@@ -395,6 +370,9 @@ export class FurnitureEditor {
   private selectedId: string | null = null;
   private pendingKind: string | null = null;
   private ghost: Phaser.GameObjects.Image | null = null;
+
+  /** Set by GameCanvas: fired whenever the selection or the selected item's scale changes, so the sidebar's resize slider can track it (including changes made via wheel-resize, not just the slider itself). */
+  onSelectionChange: ((selection: FurnitureSelection | null) => void) | null = null;
 
   constructor(private readonly scene: Phaser.Scene) {
     scene.input.on("pointermove", this.handlePointerMove, this);
@@ -428,24 +406,9 @@ export class FurnitureEditor {
     this.applyScale(this.ghost, kind, 1);
   }
 
-  /** Reads every item back out of localStorage (falling back to the baked-in DEFAULT_ITEMS when there's no save yet) and spawns it. Call once at scene boot. */
+  /** Spawns every item from game/data/furnitureLayout.json (the project's default layout). Call once at scene boot. */
   load(): void {
-    let raw: string | null = null;
-    try {
-      raw = localStorage.getItem(STORAGE_KEY);
-    } catch {
-      // ignore — falls through to DEFAULT_ITEMS below
-    }
-    let parsed: unknown = DEFAULT_ITEMS;
-    if (raw) {
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = DEFAULT_ITEMS;
-      }
-    }
-    if (!Array.isArray(parsed)) return;
-    for (const entry of parsed) {
+    for (const entry of defaultLayout) {
       if (isFurnitureEditorItem(entry)) this.spawn(entry);
     }
   }
@@ -455,8 +418,13 @@ export class FurnitureEditor {
     return Array.from(this.items.values()).map(computeFootprintRect);
   }
 
-  /** Serializes every placed item's world x/y/rotation/scale to localStorage. */
-  save(): void {
+  /**
+   * Serializes every placed item's world x/y/rotation/scale and persists it
+   * as the project's default layout (game/data/furnitureLayout.json, via the
+   * dev-only save API route) — the same layout load() reads on next boot, in
+   * this browser or a fresh one. Throws on failure so the sidebar can surface it.
+   */
+  async save(): Promise<void> {
     const data: FurnitureEditorItem[] = Array.from(this.items.values()).map(({ id, kind, x, y, rotation, scale }) => ({
       id,
       kind,
@@ -465,11 +433,12 @@ export class FurnitureEditor {
       rotation,
       scale,
     }));
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch {
-      // dev-only convenience feature — a full quota/storage failure isn't worth surfacing to the user
-    }
+    const response = await fetch(SAVE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) throw new Error(`Save failed (${response.status})`);
   }
 
   private spawn(data: FurnitureEditorItem): void {
@@ -515,6 +484,24 @@ export class FurnitureEditor {
     this.selectedId = id;
     const next = id ? this.items.get(id) : null;
     next?.image.setTint(SELECTED_TINT);
+    this.notifySelection();
+  }
+
+  /** Fires onSelectionChange with the current selection's id/kind/scale (or null). Called on every select() as well as every scale change to the selected item, so the sidebar slider tracks wheel-resize too. */
+  private notifySelection(): void {
+    if (!this.onSelectionChange) return;
+    const item = this.selectedId ? this.items.get(this.selectedId) : null;
+    this.onSelectionChange(item ? { id: item.id, kind: item.kind, scale: item.scale } : null);
+  }
+
+  /** Resizes the currently selected item to `scale` (clamped to SCALE_MIN/SCALE_MAX) — the sidebar slider's write path, sharing the same apply/clamp logic as wheel-resize (handleWheel). No-op if nothing is selected. */
+  setSelectedScale(scale: number): void {
+    if (!this.selectedId) return;
+    const item = this.items.get(this.selectedId);
+    if (!item) return;
+    item.scale = Phaser.Math.Clamp(scale, SCALE_MIN, SCALE_MAX);
+    this.applyScale(item.image, item.kind, item.scale);
+    this.notifySelection();
   }
 
   private cancelPlacement(): void {
@@ -532,9 +519,31 @@ export class FurnitureEditor {
   private handleCanvasPointerDown(pointer: Phaser.Input.Pointer): void {
     if (!this.active || !this.pendingKind) return;
     const kind = this.pendingKind;
-    const dropped = unproject(pointer.worldX, pointer.worldY);
-    const { x, y } = clampToRoomFloor(dropped.x, dropped.y);
     this.cancelPlacement();
+    this.dropItemAt(kind, pointer.worldX, pointer.worldY);
+  }
+
+  /**
+   * Places `kind` at a browser drag-and-drop landing point: `pageX`/`pageY`
+   * (from the DOM `drop` event, e.g. e.clientX/clientY) are converted through
+   * the same canvas-scaling transform Phaser's own input plugin uses
+   * (game.scale.transformX/Y) into camera-space coordinates, then into a
+   * world point — the same pipeline pointer.worldX/worldY (used by the
+   * click-to-place path above) is built from internally.
+   */
+  placeAt(kind: string, pageX: number, pageY: number): void {
+    if (!this.active) return;
+    const scaleManager = this.scene.game.scale;
+    const camX = scaleManager.transformX(pageX);
+    const camY = scaleManager.transformY(pageY);
+    const worldPoint = this.scene.cameras.main.getWorldPoint(camX, camY);
+    this.dropItemAt(kind, worldPoint.x, worldPoint.y);
+  }
+
+  /** Shared by the click-to-place and drag-and-drop paths: unprojects a screen-space point to world floor coordinates, clamps it to the room it lands in, spawns `kind` there, and selects it. */
+  private dropItemAt(kind: string, screenX: number, screenY: number): void {
+    const dropped = unproject(screenX, screenY);
+    const { x, y } = clampToRoomFloor(dropped.x, dropped.y);
     const id = `${kind}-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
     this.spawn({ id, kind, x, y, rotation: 0, scale: 1 });
     this.select(id);
@@ -559,6 +568,7 @@ export class FurnitureEditor {
     if (!item || !currentlyOver.includes(item.image)) return;
     item.scale = Phaser.Math.Clamp(item.scale - Math.sign(deltaY) * SCALE_STEP, SCALE_MIN, SCALE_MAX);
     this.applyScale(item.image, item.kind, item.scale);
+    this.notifySelection();
   }
 
   private handleRotateKey(): void {
@@ -582,17 +592,4 @@ export class FurnitureEditor {
     for (const item of this.items.values()) if (item.image === image) return item;
     return undefined;
   }
-}
-
-function isFurnitureEditorItem(value: unknown): value is FurnitureEditorItem {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.id === "string" &&
-    typeof v.kind === "string" &&
-    typeof v.x === "number" &&
-    typeof v.y === "number" &&
-    typeof v.rotation === "number" &&
-    typeof v.scale === "number"
-  );
 }
