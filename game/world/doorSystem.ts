@@ -79,8 +79,14 @@ function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness
   drawBox(g, footprint, color);
   drawDoorPanels(g, footprint, color);
 
-  // Lever handle + round backplate near the free (non-hinge) edge, waist height.
+  // Rectangular brass escutcheon plate, then the round backplate + lever on
+  // top of it — real hardware reads as a plate-and-lever stack, not a lever
+  // floating directly on bare wood.
   const backplate = project(p.hinge.x + dirX * p.span * 0.85, p.hinge.y + dirY * p.span * 0.85, WALL_HEIGHT_PX * 0.45);
+  g.fillStyle(darken(HANDLE_COLOR, 35), 0.9);
+  g.fillRect(backplate.x - 1.5, backplate.y - 3.5, 3, 7);
+  g.lineStyle(1, darken(HANDLE_COLOR, 10), 0.8);
+  g.strokeRect(backplate.x - 1.5, backplate.y - 3.5, 3, 7);
   g.fillStyle(darken(HANDLE_COLOR, 20), 1);
   g.fillCircle(backplate.x, backplate.y, 2);
   g.fillStyle(HANDLE_COLOR, 1);
@@ -90,15 +96,27 @@ function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness
   g.lineBetween(backplate.x, backplate.y, leverTip.x, leverTip.y);
   g.fillStyle(lighten(HANDLE_COLOR, 60), 0.9);
   g.fillCircle(backplate.x - 0.4, backplate.y - 0.4, 0.5);
+  // Keyhole below the lever, in the escutcheon plate.
+  g.fillStyle(darken(HANDLE_COLOR, 55), 0.9);
+  g.fillCircle(backplate.x, backplate.y + 2, 0.5);
+
+  // Hinge knuckles up the hinge-side edge — three small brass barrels
+  // marking where the leaf actually pivots.
+  for (const t of [0.18, 0.5, 0.82]) {
+    const knuckle = project(p.hinge.x, p.hinge.y, WALL_HEIGHT_PX * t);
+    g.fillStyle(darken(HANDLE_COLOR, 15), 0.85);
+    g.fillRect(knuckle.x - 1, knuckle.y - 1.5, 2, 3);
+  }
 }
 
 /** Warm brass, independent of the leaf's own (per-room) body color. */
 const HANDLE_COLOR = 0xc9a24b;
 
 /**
- * Raised-panel detail on a door leaf's actual face — a 2-row panel grid with
- * a light/dark bevel per panel, plus faint vertical wood-grain streaks — laid
- * out with the same bilinear per-face point trick wallSystem's
+ * Raised-panel detail on a door leaf's actual face — a 3-row panel grid (top,
+ * mid, bottom rail, like a real colonial door) with a light/dark bevel plus
+ * an inner recessed groove per panel, and denser vertical wood-grain streaks
+ * — laid out with the same bilinear per-face point trick wallSystem's
  * drawBrickFace uses for its brick field. `drawBox` draws two near faces (the
  * door's thin edge and its wide face); only the longer of the two — the one
  * actually facing the camera as "the door" rather than its sliver edge — gets
@@ -129,8 +147,9 @@ function drawDoorPanels(g: Phaser.GameObjects.Graphics, footprint: BoxFootprint,
   };
 
   const PANEL_ROWS: [number, number][] = [
-    [0.08, 0.46],
-    [0.54, 0.92],
+    [0.06, 0.28],
+    [0.34, 0.66],
+    [0.72, 0.94],
   ];
   const uInset = 0.12;
   for (const [vTop, vBottom] of PANEL_ROWS) {
@@ -146,13 +165,24 @@ function drawDoorPanels(g: Phaser.GameObjects.Graphics, footprint: BoxFootprint,
     g.lineStyle(1, darken(color, 40), 0.8);
     g.lineBetween(tr.x, tr.y, br.x, br.y);
     g.lineBetween(bl.x, bl.y, br.x, br.y);
+
+    // Inner recessed groove — a second, smaller inset outline giving the
+    // panel real carved depth instead of one flat beveled rectangle.
+    const vPad = (vBottom - vTop) * 0.16;
+    const itl = at(uInset + 0.05, vTop + vPad);
+    const itr = at(1 - uInset - 0.05, vTop + vPad);
+    const ibr = at(1 - uInset - 0.05, vBottom - vPad);
+    const ibl = at(uInset + 0.05, vBottom - vPad);
+    g.lineStyle(1, darken(color, 45), 0.55);
+    g.strokePoints([itl, itr, ibr, ibl], true);
   }
 
-  // Faint vertical wood-grain streaks across the whole face.
-  g.lineStyle(1, darken(color, 10), 0.15);
-  for (let u = 0.06; u < 1; u += 0.09) {
-    const p0 = at(u, 0.05);
-    const p1 = at(u, 0.95);
+  // Denser vertical wood-grain streaks across the whole face, alternating
+  // strength so the grain reads as fibrous rather than a uniform hatch.
+  for (let i = 0, u = 0.05; u < 1; i++, u += 0.065) {
+    g.lineStyle(1, darken(color, 10), i % 2 === 0 ? 0.18 : 0.1);
+    const p0 = at(u, 0.04);
+    const p1 = at(u, 0.96);
     g.lineBetween(p0.x, p0.y, p1.x, p1.y);
   }
 }

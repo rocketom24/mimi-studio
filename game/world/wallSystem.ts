@@ -548,22 +548,104 @@ function wallBoxCorners(rect: PixelRect) {
   return { corners, base, top, nearIdx, prevIdx: (nearIdx + 3) % 4, nextIdx: (nearIdx + 1) % 4 };
 }
 
+/** Baseboard/crown moulding split points, in world-px z, within WALL_HEIGHT_PX — see drawWallBlockFlat. */
+const BASEBOARD_Z = WALL_HEIGHT_PX * 0.14;
+const CROWN_Z = WALL_HEIGHT_PX * 0.86;
+
+/** One flat trim band across a wall face, between two of its world corners, at a fixed z range — the baseboard/crown mouldings in drawWallBlockFlat. */
+function drawFaceBand(
+  g: Phaser.GameObjects.Graphics,
+  corners: BoxFootprint,
+  aIdx: number,
+  bIdx: number,
+  z0: number,
+  z1: number,
+  color: number,
+): void {
+  const a0 = project(corners[aIdx].x, corners[aIdx].y, z0);
+  const b0 = project(corners[bIdx].x, corners[bIdx].y, z0);
+  const a1 = project(corners[aIdx].x, corners[aIdx].y, z1);
+  const b1 = project(corners[bIdx].x, corners[bIdx].y, z1);
+  g.fillStyle(color, 1);
+  g.fillPoints([a0, b0, b1, a1], true);
+}
+
 /**
- * One back-wall run (see createWalls' isBackWall split) drawn as a flat-color
- * 3D block: footprint plate, top cap, and the two camera-facing side faces
- * are all a plain flat fill — no brick field, no photo texture, every pixel
- * is drawn vector shapes. Front walls stay invisible instead (see
- * drawWallShadow) — the dollhouse's whole open-cutaway view depends on them
- * not blocking the camera's line into a room.
+ * Recessed wainscot panels across a wall face's mid-band (between baseboard
+ * and crown) — one per roughly a tile's width, each with a light/dark bevel
+ * like the door leaf's raised panels (see doorSystem's drawDoorPanels), so a
+ * long flat run reads as built from real paneling instead of one
+ * undifferentiated slab. Skipped on runs too short to read as more than a
+ * single seam.
+ */
+function drawFacePanels(
+  g: Phaser.GameObjects.Graphics,
+  corners: BoxFootprint,
+  aIdx: number,
+  bIdx: number,
+  z0: number,
+  z1: number,
+  color: number,
+): void {
+  const worldLen = Math.hypot(corners[aIdx].x - corners[bIdx].x, corners[aIdx].y - corners[bIdx].y);
+  if (worldLen < TILE_SIZE * 1.5) return;
+  const cells = Math.max(1, Math.round(worldLen / TILE_SIZE));
+  const at = (u: number, z: number) => {
+    const x = corners[aIdx].x + (corners[bIdx].x - corners[aIdx].x) * u;
+    const y = corners[aIdx].y + (corners[bIdx].y - corners[aIdx].y) * u;
+    return project(x, y, z);
+  };
+  const inset = Math.min(0.1, 0.4 / cells);
+  for (let i = 0; i < cells; i++) {
+    const u0 = i / cells + inset;
+    const u1 = (i + 1) / cells - inset;
+    if (u1 <= u0) continue;
+    const tl = at(u0, z1);
+    const tr = at(u1, z1);
+    const br = at(u1, z0);
+    const bl = at(u0, z0);
+    g.fillStyle(darken(color, 8), 0.3);
+    g.fillPoints([tl, tr, br, bl], true);
+    g.lineStyle(1, lighten(color, 22), 0.45);
+    g.lineBetween(tl.x, tl.y, tr.x, tr.y);
+    g.lineBetween(tl.x, tl.y, bl.x, bl.y);
+    g.lineStyle(1, darken(color, 22), 0.45);
+    g.lineBetween(tr.x, tr.y, br.x, br.y);
+    g.lineBetween(bl.x, bl.y, br.x, br.y);
+  }
+}
+
+/**
+ * One back-wall run (see createWalls' isBackWall split) drawn as a shaded 3D
+ * block: footprint plate, top cap, lit/shadowed side faces (matching
+ * drawBox's furniture-grade bevel instead of one flat undifferentiated
+ * fill), plus baseboard, crown, and wainscot-panel trim — no brick field, no
+ * photo texture, every pixel is still drawn vector shapes. Front walls stay
+ * invisible instead (see drawWallShadow) — the dollhouse's whole
+ * open-cutaway view depends on them not blocking the camera's line into a
+ * room.
  */
 function drawWallBlockFlat(scene: Phaser.Scene, rect: PixelRect, depth: number, stroke: boolean): WallSegment {
   const { corners, base, top, nearIdx, prevIdx, nextIdx } = wallBoxCorners(rect);
   const g = scene.add.graphics().setDepth(depth);
+  const faceLit = lighten(WALL_COLOR, 8);
+  const faceShade = darken(WALL_COLOR, 16);
+
   g.fillStyle(WALL_COLOR, 1);
   g.fillPoints(base, true);
+  g.fillStyle(faceLit, 1);
   g.fillPoints([base[prevIdx], base[nearIdx], top[nearIdx], top[prevIdx]], true);
+  g.fillStyle(faceShade, 1);
   g.fillPoints([base[nextIdx], base[nearIdx], top[nearIdx], top[nextIdx]], true);
+  g.fillStyle(darken(WALL_COLOR, 4), 1);
   g.fillPoints(top, true);
+
+  drawFacePanels(g, corners, prevIdx, nearIdx, BASEBOARD_Z, CROWN_Z, faceLit);
+  drawFacePanels(g, corners, nextIdx, nearIdx, BASEBOARD_Z, CROWN_Z, faceShade);
+  drawFaceBand(g, corners, prevIdx, nearIdx, 0, BASEBOARD_Z, darken(WALL_COLOR, 30));
+  drawFaceBand(g, corners, nextIdx, nearIdx, 0, BASEBOARD_Z, darken(WALL_COLOR, 38));
+  drawFaceBand(g, corners, prevIdx, nearIdx, CROWN_Z, WALL_HEIGHT_PX, lighten(WALL_COLOR, 26));
+  drawFaceBand(g, corners, nextIdx, nearIdx, CROWN_Z, WALL_HEIGHT_PX, lighten(WALL_COLOR, 18));
 
   if (stroke) strokeWallBlock(g, rect, { corners, base, top, nearIdx, prevIdx, nextIdx });
   return { rect, graphics: g };
@@ -745,6 +827,19 @@ function drawWindowIsometric(g: Phaser.GameObjects.Graphics, win: PixelRect): vo
     project(xa, y, zb),
   ];
 
+  // Outer casing board — a wider, lighter trim wrapping the reveal, giving
+  // the opening a real stepped-moulding profile instead of one flat frame.
+  const casing = quad(
+    x0 - 1 - CASING_OUTSET_PX,
+    x1 + 1 + CASING_OUTSET_PX,
+    WINDOW_Z_BOTTOM - 1 - CASING_OUTSET_PX,
+    WINDOW_Z_TOP + 1 + CASING_OUTSET_PX,
+  );
+  g.fillStyle(lighten(ARCH_PALETTE.windowFrame, 18), 1);
+  g.fillPoints(casing, true);
+  g.lineStyle(1, ARCH_PALETTE.outline, 0.5);
+  g.strokePoints(casing, true);
+
   const frame = quad(x0 - 1, x1 + 1, WINDOW_Z_BOTTOM - 1, WINDOW_Z_TOP + 1);
   g.fillStyle(ARCH_PALETTE.windowFrame, 1);
   g.fillPoints(frame, true);
@@ -758,18 +853,32 @@ function drawWindowIsometric(g: Phaser.GameObjects.Graphics, win: PixelRect): vo
   g.fillStyle(lighten(ARCH_PALETTE.windowGlass, 40), 0.6);
   g.fillPoints(quad(x0, x1, WINDOW_Z_TOP - 1, WINDOW_Z_TOP), true);
 
-  // Center mullion.
+  // Cross muntins — vertical + horizontal — a 4-lite grid instead of a plain
+  // 2-pane split.
   const xm = x0 + win.w / 2;
   const mullBottom = project(xm, yFace, WINDOW_Z_BOTTOM);
   const mullTop = project(xm, yFace, WINDOW_Z_TOP);
   g.lineStyle(1, ARCH_PALETTE.windowFrame, 1);
   g.lineBetween(mullBottom.x, mullBottom.y, mullTop.x, mullTop.y);
+  const zm = (WINDOW_Z_BOTTOM + WINDOW_Z_TOP) / 2;
+  const mullLeft = project(x0, yFace, zm);
+  const mullRight = project(x1, yFace, zm);
+  g.lineBetween(mullLeft.x, mullLeft.y, mullRight.x, mullRight.y);
 
   // Sill: a short ledge below the frame, projecting slightly toward the
   // camera so it reads as sticking out of the wall rather than painted flat.
   g.fillStyle(darken(ARCH_PALETTE.windowFrame, 15), 1);
   g.fillPoints(
-    quad(x0 - 1, x1 + 1, WINDOW_Z_BOTTOM - 1 - WINDOW_SILL_PX, WINDOW_Z_BOTTOM - 1, yFace + WINDOW_SILL_DEPTH_PX),
+    quad(
+      x0 - 1 - CASING_OUTSET_PX,
+      x1 + 1 + CASING_OUTSET_PX,
+      WINDOW_Z_BOTTOM - 1 - WINDOW_SILL_PX,
+      WINDOW_Z_BOTTOM - 1,
+      yFace + WINDOW_SILL_DEPTH_PX,
+    ),
     true,
   );
 }
+
+/** Extra reach of the outer casing board beyond the window's reveal frame. */
+const CASING_OUTSET_PX = 2;
