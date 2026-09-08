@@ -3,6 +3,7 @@ import { TILE_SIZE } from "@/game/config/world";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import type { InputSource } from "@/game/types/input";
 import type { Facing, PlayerState } from "@/game/types/player";
+import { advancePhase, approach, approachAngle, keyframeBlend } from "@/game/entities/walkCycle";
 import { visualDepth } from "@/game/world/depth";
 import { project, screenToWorldDelta } from "@/game/world/projection";
 
@@ -10,9 +11,6 @@ const SHEET1_KEY = "mimi-sheet1";
 const SHEET2_KEY = "mimi-sheet2";
 const SHEET1_PATH = "/assets/game/character/mimi-sheet-1.png";
 const SHEET2_PATH = "/assets/game/character/mimi-sheet-2.png";
-const WALK_DOWN_ANIM = "mimi-walk-down";
-const WALK_UP_ANIM = "mimi-walk-up";
-const WALK_LEFT_ANIM = "mimi-walk-left";
 
 const UP_LEFT_SWING_KEY = "mimi-up-left-swing";
 const UP_RIGHT_SWING_KEY = "mimi-up-right-swing";
@@ -77,6 +75,31 @@ export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 
 const PLAYER_SPEED = 65; // logical px/sec
+
+// Velocity eases toward its target instead of snapping, so starts/stops carry
+// a little weight. Rates are 1/sec exponential-approach constants (see
+// walkCycle.approach) — decel is faster than accel so stopping still feels
+// crisp rather than sliding to a halt.
+const ACCEL_RATE = 22;
+const DECEL_RATE = 28;
+
+// One full 4-keyframe gait cycle (idle -> stride A -> idle -> stride B) plays
+// out over this much actual world-space travel, tying the animation directly
+// to how far Mimi has really moved instead of a fixed timer - the same
+// distance covers the same cycle at any speed, so there's no sliding.
+const STRIDE_LENGTH_PX = 34;
+
+// When movement stops mid-stride, phase eases toward whichever neutral idle
+// anchor (phase 0 or PI - both keyframe sets place idle at both) is nearer,
+// instead of freezing mid-step or popping back instantly.
+const IDLE_SETTLE_RATE = 7;
+
+// 0..1 envelope that eases in when walking starts and back out when it stops,
+// scaling the lean/weight-shift below so they fade in/out with the stride
+// instead of snapping on and off with animationState.
+const WALK_INTENSITY_RATE = 9;
+const LEAN_MAX_RAD = Phaser.Math.DegToRad(3);
+const SWAY_MAX_PX = 1.2;
 
 const IDLE_BOB_TIME_SCALE = 1;
 const WALK_BOB_TIME_SCALE = 3;
@@ -168,60 +191,50 @@ function ensureMimiFrames(scene: Phaser.Scene): void {
   buildShiftedFrameTexture(scene, UP_RIGHT_SWING_KEY, UP, UP_RIGHT_FOOT_PIECE);
   buildShiftedFrameTexture(scene, LEFT_STRIDE_FWD_KEY, LEFT, LEFT_LEG_PIECE_FWD);
   buildShiftedFrameTexture(scene, LEFT_STRIDE_BACK_KEY, LEFT, LEFT_LEG_PIECE_BACK);
-
-  // Every cycle below alternates a real contact/stride pose with the
-  // standing idle pose (there's no real "passing" mid-stride art). Giving
-  // both an equal share of the cycle (the old flat frameRate: 8) makes the
-  // legs visibly reset to a neutral together-stance for half of every step
-  // while the body keeps translating - reads as gliding/sliding rather than
-  // walking. Real gait spends most of a step's time with weight on the
-  // planted/contact leg and only a brief instant with feet passing under the
-  // body, so holding the stride frames longer and flashing the idle frame
-  // briefly reads as a foot actually planting each step. Total cycle time
-  // (500ms) is unchanged from the old 4 * 125ms, so this doesn't affect how
-  // far she travels per step - only how that same time is distributed.
-  const STRIDE_FRAME_MS = 180;
-  const PASSING_FRAME_MS = 70;
-
-  if (!scene.anims.exists(WALK_DOWN_ANIM)) {
-    scene.anims.create({
-      key: WALK_DOWN_ANIM,
-      frames: [
-        { key: DOWN_IDLE.key, frame: DOWN_IDLE.frame, duration: PASSING_FRAME_MS },
-        { key: DOWN_STRIDE.key, frame: DOWN_STRIDE.frame, duration: STRIDE_FRAME_MS },
-        { key: DOWN_IDLE.key, frame: DOWN_IDLE.frame, duration: PASSING_FRAME_MS },
-        { key: DOWN_STRIDE_B.key, frame: DOWN_STRIDE_B.frame, duration: STRIDE_FRAME_MS },
-      ],
-      repeat: -1,
-    });
-  }
-
-  if (!scene.anims.exists(WALK_UP_ANIM)) {
-    scene.anims.create({
-      key: WALK_UP_ANIM,
-      frames: [
-        { key: UP.key, frame: UP.frame, duration: PASSING_FRAME_MS },
-        { key: UP_LEFT_SWING_KEY, frame: "__BASE", duration: STRIDE_FRAME_MS },
-        { key: UP.key, frame: UP.frame, duration: PASSING_FRAME_MS },
-        { key: UP_RIGHT_SWING_KEY, frame: "__BASE", duration: STRIDE_FRAME_MS },
-      ],
-      repeat: -1,
-    });
-  }
-
-  if (!scene.anims.exists(WALK_LEFT_ANIM)) {
-    scene.anims.create({
-      key: WALK_LEFT_ANIM,
-      frames: [
-        { key: LEFT.key, frame: LEFT.frame, duration: PASSING_FRAME_MS },
-        { key: LEFT_STRIDE_FWD_KEY, frame: "__BASE", duration: STRIDE_FRAME_MS },
-        { key: LEFT.key, frame: LEFT.frame, duration: PASSING_FRAME_MS },
-        { key: LEFT_STRIDE_BACK_KEY, frame: "__BASE", duration: STRIDE_FRAME_MS },
-      ],
-      repeat: -1,
-    });
-  }
 }
+
+interface FrameRef {
+  key: string;
+  frame: string | number;
+}
+
+/**
+ * Each direction's walk cycle as 4 keyframes spaced evenly around one gait
+ * phase (0, PI/2, PI, 3*PI/2): idle -> contact A -> idle -> contact B. Idle
+ * appears twice - a real gait passes through a feet-together moment once per
+ * step, not once per stride - so it reads as a false "reset to standing" if
+ * only alternating between the two contact poses directly.
+ *
+ * Player hard-cuts between these (see applyPose) rather than crossfading -
+ * alpha-blending idle against a contact pose with a very different arm/leg
+ * position made the whole sprite visibly pulse in and out at every
+ * transition (a fading double-exposure reads as a flash; an instant swap
+ * reads as a normal animation frame, the same way it does in every
+ * traditional sprite-sheet walk cycle). What actually fixes the original
+ * "static PNG sliding" complaint is picking the keyframe from real
+ * distance-locked phase (see Player.update) instead of a fixed timer, not
+ * blending between the art.
+ */
+const FRAME_SETS: Record<"down" | "up" | "left", readonly [FrameRef, FrameRef, FrameRef, FrameRef]> = {
+  down: [
+    { key: DOWN_IDLE.key, frame: DOWN_IDLE.frame },
+    { key: DOWN_STRIDE.key, frame: DOWN_STRIDE.frame },
+    { key: DOWN_IDLE.key, frame: DOWN_IDLE.frame },
+    { key: DOWN_STRIDE_B.key, frame: DOWN_STRIDE_B.frame },
+  ],
+  up: [
+    { key: UP.key, frame: UP.frame },
+    { key: UP_LEFT_SWING_KEY, frame: "__BASE" },
+    { key: UP.key, frame: UP.frame },
+    { key: UP_RIGHT_SWING_KEY, frame: "__BASE" },
+  ],
+  left: [
+    { key: LEFT.key, frame: LEFT.frame },
+    { key: LEFT_STRIDE_FWD_KEY, frame: "__BASE" },
+    { key: LEFT.key, frame: LEFT.frame },
+    { key: LEFT_STRIDE_BACK_KEY, frame: "__BASE" },
+  ],
+};
 
 /**
  * Mimi, the player character. Owns her sprite, movement, facing, and animation.
@@ -237,19 +250,30 @@ function ensureMimiFrames(scene: Phaser.Scene): void {
  */
 export class Player {
   readonly sprite: Phaser.Physics.Arcade.Sprite;
+  /** Container holding the two crossfading pose layers — see applyPose(). The thing the camera follows and the thing actually drawn. */
   readonly visual: Phaser.GameObjects.Sprite;
+  private readonly scale: number;
   private state: PlayerState;
   private readonly input: InputSource;
   private readonly bob = { offset: 0 };
   private readonly bobTween: Phaser.Tweens.Tween;
+
+  /** Gait phase in radians, advanced by actual world-space distance moved (see STRIDE_LENGTH_PX) — never by a timer. */
+  private phase = 0;
+  /** 0..1, eases toward 1 while walking and 0 while idle; scales the lean/sway so they fade rather than snap. */
+  private walkIntensity = 0;
+  private lastWorldX: number;
+  private lastWorldY: number;
 
   constructor(scene: Phaser.Scene, x: number, y: number, input?: InputSource) {
     ensureMimiFrames(scene);
 
     this.state = { facing: "down", animationState: "idle" };
     this.input = input ?? new KeyboardInput(scene);
+    this.lastWorldX = x;
+    this.lastWorldY = y;
 
-    const scale = PLAYER_HEIGHT / SCALE_REFERENCE_HEIGHT;
+    this.scale = PLAYER_HEIGHT / SCALE_REFERENCE_HEIGHT;
     const bodyOffsetX = Math.round(BODY_REFERENCE_WIDTH * BODY_SIDE_MARGIN_FRACTION);
     const bodyOffsetY = Math.round(BODY_REFERENCE_HEIGHT * BODY_TOP_FRACTION);
     const bodyWidth = Math.round(BODY_REFERENCE_WIDTH - 2 * bodyOffsetX);
@@ -258,7 +282,7 @@ export class Player {
     this.sprite = scene.physics.add.sprite(x, y, DOWN_IDLE.key, DOWN_IDLE.frame);
     this.sprite.setOrigin(0.5, 1);
     this.sprite.setVisible(false);
-    this.sprite.setScale(scale);
+    this.sprite.setScale(this.scale);
 
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     body.setSize(bodyWidth, bodyHeight);
@@ -267,7 +291,7 @@ export class Player {
 
     this.visual = scene.add.sprite(x, y, DOWN_IDLE.key, DOWN_IDLE.frame);
     this.visual.setOrigin(0.5, 1);
-    this.visual.setScale(scale);
+    this.visual.setScale(this.scale);
     this.visual.setDepth(visualDepth(x, y));
 
     this.bobTween = scene.tweens.add({
@@ -280,7 +304,8 @@ export class Player {
     });
   }
 
-  update(): void {
+  update(deltaMs: number): void {
+    const dt = deltaMs / 1000;
     const intent = this.input.getIntent();
     let screenDx = 0;
     let screenDy = 0;
@@ -291,23 +316,43 @@ export class Player {
 
     const moving = screenDx !== 0 || screenDy !== 0;
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
+
+    let targetVx = 0;
+    let targetVy = 0;
     if (moving) {
       const length = Math.hypot(screenDx, screenDy);
       const world = screenToWorldDelta(screenDx / length, screenDy / length);
-      body.setVelocity(world.x * PLAYER_SPEED, world.y * PLAYER_SPEED);
+      targetVx = world.x * PLAYER_SPEED;
+      targetVy = world.y * PLAYER_SPEED;
       this.setFacing(facingFromDelta(screenDx, screenDy));
-    } else {
-      body.setVelocity(0, 0);
     }
+    const rate = moving ? ACCEL_RATE : DECEL_RATE;
+    body.setVelocity(approach(body.velocity.x, targetVx, rate, dt), approach(body.velocity.y, targetVy, rate, dt));
     this.setAnimationState(moving ? "walking" : "idle");
 
+    const traveled = Math.hypot(this.sprite.x - this.lastWorldX, this.sprite.y - this.lastWorldY);
+    this.lastWorldX = this.sprite.x;
+    this.lastWorldY = this.sprite.y;
+    if (moving && traveled > 0) {
+      this.phase = advancePhase(this.phase, traveled, STRIDE_LENGTH_PX);
+    } else {
+      // Settle toward the nearer of phase 0 or PI (both are the neutral
+      // feet-together pose in every FRAME_SETS entry) instead of freezing
+      // mid-stride when a key is released.
+      const nearestIdlePhase = Math.round(this.phase / Math.PI) * Math.PI;
+      this.phase = approachAngle(this.phase, nearestIdlePhase % (Math.PI * 2), IDLE_SETTLE_RATE, dt);
+    }
+    this.walkIntensity = approach(this.walkIntensity, moving ? 1 : 0, WALK_INTENSITY_RATE, dt);
+
+    this.applyPose();
     this.reprojectVisual();
   }
 
   /** Repositions the visual sprite from the physics-authoritative sprite position — no input/movement/physics. */
   reprojectVisual(): void {
     const projected = project(this.sprite.x, this.sprite.y);
-    this.visual.setPosition(projected.x, projected.y + this.bob.offset);
+    const sway = Math.sin(this.phase) * SWAY_MAX_PX * this.walkIntensity;
+    this.visual.setPosition(projected.x + sway, projected.y + this.bob.offset);
     this.visual.setDepth(visualDepth(this.sprite.x, this.sprite.y));
   }
 
@@ -331,39 +376,28 @@ export class Player {
   setFacing(facing: Facing): void {
     if (this.state.facing === facing) return;
     this.state = { ...this.state, facing };
-    this.applyVisualState();
   }
 
   setAnimationState(animationState: PlayerState["animationState"]): void {
     if (this.state.animationState === animationState) return;
     this.state = { ...this.state, animationState };
     this.bobTween.timeScale = animationState === "walking" ? WALK_BOB_TIME_SCALE : IDLE_BOB_TIME_SCALE;
-    this.applyVisualState();
   }
 
   /**
-   * Picks the visual sprite's texture/frame + walk-cycle animation for the
-   * current facing + animation state. Every direction now has a real
-   * 4-frame stride cycle (down: two real poses; up/left: idle art plus its
-   * own rigid-shifted foot pieces — see ensureMimiFrames). "right" mirrors
-   * "left" via flipX — there's no native right-facing art.
+   * Picks this frame's keyframe, mirroring, and walking lean/sway from the
+   * current facing + gait phase. Runs every update regardless of
+   * animationState so a stopped stride keeps easing toward neutral (see
+   * IDLE_SETTLE_RATE) instead of freezing on its last frame.
    */
-  private applyVisualState(): void {
-    const { facing, animationState } = this.state;
-    const facingKey = facing === "right" ? "left" : facing;
-    this.visual.setFlipX(facing === "right");
-
-    const idle = facingKey === "down" ? DOWN_IDLE : facingKey === "up" ? UP : LEFT;
-    const walkAnim = facingKey === "down" ? WALK_DOWN_ANIM : facingKey === "up" ? WALK_UP_ANIM : WALK_LEFT_ANIM;
-
-    if (animationState === "walking") {
-      if (this.visual.anims.getName() !== walkAnim) {
-        this.visual.play(walkAnim);
-      }
-    } else {
-      this.visual.anims.stop();
-      this.visual.setTexture(idle.key, idle.frame);
-    }
+  private applyPose(): void {
+    const facingKey = this.state.facing === "right" ? "left" : this.state.facing;
+    const frames = FRAME_SETS[facingKey];
+    const { fromIndex, toIndex, blend } = keyframeBlend(this.phase, frames.length);
+    const nearest = frames[blend < 0.5 ? fromIndex : toIndex];
+    this.visual.setTexture(nearest.key, nearest.frame);
+    this.visual.setFlipX(this.state.facing === "right");
+    this.visual.setRotation(Math.sin(this.phase) * LEAN_MAX_RAD * this.walkIntensity);
   }
 
   getState(): PlayerState {

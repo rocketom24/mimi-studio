@@ -95,10 +95,10 @@ export class StudioScene extends Phaser.Scene {
     this.game.events.emit(GAME_EVENTS.StudioReady, this);
   }
 
-  update(): void {
+  update(_time: number, delta: number): void {
     if (this.inputLocked) return;
 
-    this.player.update();
+    this.player.update(delta);
     this.interactionSystem.update(this.player.worldX, this.player.worldY);
     this.interactionPrompt.update();
     updateDoors(this, this.doorSegments, this.player.worldX, this.player.worldY);
