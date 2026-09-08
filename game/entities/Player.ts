@@ -268,7 +268,7 @@ export class Player {
     this.visual = scene.add.sprite(x, y, DOWN_IDLE.key, DOWN_IDLE.frame);
     this.visual.setOrigin(0.5, 1);
     this.visual.setScale(scale);
-    this.visual.setDepth(visualDepth(y));
+    this.visual.setDepth(visualDepth(x, y));
 
     this.bobTween = scene.tweens.add({
       targets: this.bob,
@@ -308,7 +308,7 @@ export class Player {
   reprojectVisual(): void {
     const projected = project(this.sprite.x, this.sprite.y);
     this.visual.setPosition(projected.x, projected.y + this.bob.offset);
-    this.visual.setDepth(visualDepth(this.sprite.y));
+    this.visual.setDepth(visualDepth(this.sprite.x, this.sprite.y));
   }
 
   /** Logical world X — the physics-authoritative position, unprojected. Use for interaction checks and room lookups. */

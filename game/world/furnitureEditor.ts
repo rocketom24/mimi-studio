@@ -452,7 +452,7 @@ export class FurnitureEditor {
     }
     const baseScale = this.applyScale(image, data.kind, data.scale);
     image.setAngle(data.rotation);
-    image.setDepth(visualDepth(data.y));
+    image.setDepth(visualDepth(data.x, data.y));
     image.setInteractive({ draggable: true, useHandCursor: true });
 
     const item: PlacedItem = { ...data, image, baseScale };
@@ -559,7 +559,7 @@ export class FurnitureEditor {
     gameObject.setPosition(anchor.x, anchor.y);
     item.x = x;
     item.y = y;
-    gameObject.setDepth(visualDepth(y));
+    gameObject.setDepth(visualDepth(x, y));
   }
 
   private handleWheel(pointer: Phaser.Input.Pointer, currentlyOver: Phaser.GameObjects.GameObject[], _dx: number, deltaY: number): void {

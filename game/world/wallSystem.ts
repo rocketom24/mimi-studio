@@ -677,13 +677,13 @@ export function createWalls(scene: Phaser.Scene): WallSegment[] {
     // stroke per band, which would draw a visible seam line at every
     // internal row join.
     for (const band of splitIntoRowBands(rect)) {
-      const g = scene.add.graphics().setDepth(visualDepth(band.y + band.h));
+      const g = scene.add.graphics().setDepth(visualDepth(band.x + band.w / 2, band.y + band.h));
       const fillY0 = Math.max(rect.y, band.y - BAND_FILL_OVERLAP_PX);
       const fillY1 = Math.min(rect.y + rect.h, band.y + band.h + BAND_FILL_OVERLAP_PX);
       drawWallShadow(g, { x: band.x, y: fillY0, w: band.w, h: fillY1 - fillY0 }, { stroke: false });
       segments.push({ rect: band, graphics: g });
     }
-    const outline = scene.add.graphics().setDepth(visualDepth(rect.y));
+    const outline = scene.add.graphics().setDepth(visualDepth(rect.x + rect.w / 2, rect.y));
     drawWallShadow(outline, rect, { fill: false });
     segments.push({ rect, graphics: outline });
   }

@@ -59,7 +59,7 @@ export function resolveEditorTextureKey(kind: string): string {
 /** Loads every discovered furniture PNG under its own editor texture key. Call once from the scene's preload(). */
 export function preloadEditorFurnitureSprites(scene: Phaser.Scene, filenames: readonly string[]): void {
   for (const filename of filenames) {
-    scene.load.image(editorTextureKey(fileStem(filename)), `/assets/game/furniture/${filename}`);
+    scene.load.image(editorTextureKey(canonicalKind(fileStem(filename))), `/assets/game/furniture/${filename}`);
   }
 }
 

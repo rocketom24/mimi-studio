@@ -71,7 +71,8 @@ function drawDoorLeaf(g: Phaser.GameObjects.Graphics, p: DoorPlacement, openness
     { x: p.hinge.x + perpX * half, y: p.hinge.y + perpY * half },
   ];
 
-  g.setDepth(visualDepth(Math.max(...footprint.map((c) => c.y))));
+  const frontCorner = footprint.reduce((a, b) => (a.x + a.y >= b.x + b.y ? a : b));
+  g.setDepth(visualDepth(frontCorner.x, frontCorner.y));
   g.setAlpha(1);
 
   const color = p.door.color ?? DOOR_COLOR;

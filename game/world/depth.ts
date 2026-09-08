@@ -16,7 +16,17 @@ export const DEPTH = {
   PROMPT: 5000,
 } as const;
 
-/** Deterministic Y-sort depth: larger world Y (closer to the fixed camera) renders later, i.e. on top. */
-export function visualDepth(worldY: number): number {
-  return DEPTH.DYNAMIC_BASE + worldY;
+/**
+ * Deterministic depth-sort key: larger (closer to the fixed camera) renders
+ * later, i.e. on top. Matches projection.ts's screenY = (worldX + worldY) *
+ * ISO_Y_SCALE exactly (any monotonic function of worldX + worldY works as a
+ * sort key, so the scale itself is dropped) — worldY alone was only a
+ * correct proxy for screen depth for objects sharing similar worldX. Two
+ * rooms side by side (e.g. Living Room and Bedroom + Study, same Y band,
+ * different X) can each have furniture near their own back wall (small
+ * worldY) that still needs to out-draw a shallower object in the other room
+ * once worldX is factored in.
+ */
+export function visualDepth(worldX: number, worldY: number): number {
+  return DEPTH.DYNAMIC_BASE + worldX + worldY;
 }

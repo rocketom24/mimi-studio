@@ -324,7 +324,7 @@ function createSpritePiece(
   kind: FurnitureKind,
 ): (Phaser.GameObjects.Graphics | Phaser.GameObjects.Image)[] {
   const anchor = project(worldX + w / 2, worldY + h);
-  const depth = visualDepth(worldY + h);
+  const depth = visualDepth(worldX + w / 2, worldY + h);
 
   const shadow = scene.add.graphics().setDepth(depth);
   drawSpriteShadow(shadow, anchor, w);
@@ -376,7 +376,7 @@ export function createFurniture(scene: Phaser.Scene, room: RoomDef): Phaser.Game
     const flush = piece.kind ? FLUSH_KINDS.has(piece.kind) : false;
     const heightPx = piece.kind ? (EXTRUSION_HEIGHT[piece.kind] ?? 3) : 3;
 
-    const g = scene.add.graphics().setDepth(visualDepth(worldY + h));
+    const g = scene.add.graphics().setDepth(visualDepth(worldX + w / 2, worldY + h));
 
     if (!flush) {
       const shadowAnchor = project(worldX, worldY + h);
