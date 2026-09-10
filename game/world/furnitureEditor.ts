@@ -14,11 +14,56 @@ import {
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import { WALL_THICKNESS_PAD_PX } from "@/game/world/wallSystem";
-import defaultLayout from "@/game/data/furnitureLayout.json";
-
+import {
+  type Point,
+  type CollisionShapeMap,
+  type FootprintItem,
+  type FootprintPolygon,
+  computeItemFootprintPolygons,
+  obbToPolygon,
+  pointInPolygon,
+  worldPointToLocal,
+} from "@/game/world/collisionShapes";
 export type { FurnitureEditorItem };
 
+/** Phaser loader cache keys `preloadFurnitureEditorData` fetches these under — see StudioScene.preload(). */
+const LAYOUT_CACHE_KEY = "furnitureLayoutData";
+const COLLISION_SHAPES_CACHE_KEY = "furnitureCollisionShapesData";
+const INSTANCE_COLLISION_SHAPES_CACHE_KEY = "furnitureInstanceCollisionShapesData";
+
 const SAVE_ENDPOINT = "/api/furniture-layout";
+const SAVE_COLLISION_ENDPOINT = "/api/furniture-collision-shapes";
+const SAVE_INSTANCE_COLLISION_ENDPOINT = "/api/furniture-instance-collision-shapes";
+
+/**
+ * Loads the three persisted-editor-data files (layout, kind collision
+ * defaults, instance collision overrides) through Phaser's own loader
+ * instead of a bundler-tracked `import` — call once from the scene's
+ * preload(). This is what lets Save (which writes those same files on disk
+ * via the API routes above) never look like a source-code change to the dev
+ * server: a runtime fetch through Phaser's loader has no effect on the
+ * module graph, so it can never trigger Turbopack's "recompile and reload
+ * the page" fallback the way a static JSON import did (see the API routes'
+ * GET handlers' doc comments) — that forced reload was silently wiping
+ * whatever editor panel was open, reading as a random disappearing panel.
+ */
+export function preloadFurnitureEditorData(scene: Phaser.Scene): void {
+  scene.load.json(LAYOUT_CACHE_KEY, SAVE_ENDPOINT);
+  scene.load.json(COLLISION_SHAPES_CACHE_KEY, SAVE_COLLISION_ENDPOINT);
+  scene.load.json(INSTANCE_COLLISION_SHAPES_CACHE_KEY, SAVE_INSTANCE_COLLISION_ENDPOINT);
+}
+
+/** Collision-editing status for the placed item currently being edited, surfaced to the panel via onCollisionShapesChange — always one specific instance now (see beginInstanceCollisionEdit), never a kind's shared template. */
+export interface CollisionEditInfo {
+  itemId: string;
+  kind: string;
+  shapeCount: number;
+  hasSelection: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+export type CollisionTool = "select" | "rect" | "poly";
 
 /**
  * Minimal clearance trimmed off a footprint's authored width so Mimi doesn't
@@ -27,6 +72,25 @@ const SAVE_ENDPOINT = "/api/furniture-layout";
  * undershoot a piece's real width enough to let Mimi walk into it.
  */
 const FOOTPRINT_WIDTH_TRIM = 0.95;
+
+/**
+ * Footprint width as a fraction of the item's display width (bw) — the
+ * generic model's other axis. Defaults to FOOTPRINT_WIDTH_TRIM (near
+ * full-width), right for furniture whose base spans nearly its whole
+ * sprite. g10 is the only kind still on the generic model with a narrow
+ * override (a plant pot, much narrower than its own foliage) — every other
+ * off-default kind's art has enough transparent margin around/below the
+ * real object that it also needs an offset correction the generic model
+ * can't express, so those get a full MEASURED_FOOTPRINTS entry instead
+ * (see below).
+ */
+const FOOTPRINT_WIDTH_FRAC_BY_KIND: Record<string, number> = {
+  g10: 0.48,
+};
+
+function footprintWidthFrac(kind: string): number {
+  return FOOTPRINT_WIDTH_FRAC_BY_KIND[canonicalKind(kind)] ?? FOOTPRINT_WIDTH_TRIM;
+}
 
 /**
  * Footprint depth (front-to-back world extent) as a fraction of the item's
@@ -42,12 +106,18 @@ const FOOTPRINT_DEPTH_RATIO_BY_KIND: Record<string, number> = {
   mirror: 0.12,
   "dressing-table": 0.3,
   almirah: 0.35,
-  // Generic front-anchored box, deliberately generous (see
-  // extendFootprintToCorner below, which stretches it the rest of the way to
-  // both walls) — kitchen.png is an L-shaped corner unit, not a simple
-  // rectangle, so an exact measured footprint isn't worth chasing; this just
-  // needs to fully cover the cabinet run without reaching into the walkway.
-  kitchen: 0.6,
+  // kitchen.png is an L-shaped corner unit, not a simple rectangle, so an
+  // exact measured footprint isn't worth chasing — extendFootprintToCorner
+  // below stretches this the rest of the way to both walls, so this only
+  // needs to cover the counter's own front-to-back depth. 0.6 (deliberately
+  // "generous") turned out to badly overshoot at this item's actual placed
+  // scale — its footprint reached past the counter into open living-room
+  // floor, and even past the room's own walls — confirmed via a walkability
+  // grid scan; 0.32 matches the counter's real proportions (see the alpha
+  // bbox measurement in MEASURED_FOOTPRINTS' doc comment) without losing
+  // the corner-stretch behavior.
+  kitchen: 0.32,
+  g10: 0.85,
 };
 
 function footprintDepthRatio(kind: string): number {
@@ -89,7 +159,7 @@ function extendFootprintToCorner(
  * well off to the side of item.x/item.y (the image's declared bottom-center
  * anchor, which for a couch or an off-center console doesn't land on the
  * piece's own footprint at all). Those get an explicit measured entry below
- * instead, applied purely in world space by computeFootprintRect exactly
+ * instead, applied purely in world space by computeFootprintObb exactly
  * like every other kind. Expressed as fractions of baseDisplayWidth(kind) so
  * they track a future re-scale of BASE_WIDTH_TILES.
  */
@@ -157,14 +227,76 @@ const MEASURED_FOOTPRINTS: Partial<Record<string, MeasuredFootprint>> = {
   // garden-sofa.png is a whole seating-nook GROUP (2-3 chairs + a table,
   // sometimes a plant), not one object — no single rectangle is its "exact
   // physical base." Footprint covers the group's outer extent so Mimi can't
-  // cut through the middle of the nook.
+  // cut through the middle of the nook. Kept under both its pre-rename key
+  // (g2, for any item saved before the rename) and its current filename key
+  // (garden-sofa, what freshly-placed items are tagged with today) — see
+  // canonicalKind()/RENAMED_STEMS in furnitureEditorAssets.ts.
   g2: { depthFrac: 0.75684, lengthFrac: 1.41193, offsetXFrac: -0.62864, offsetYFrac: -0.35983 },
+  "garden-sofa": { depthFrac: 0.75684, lengthFrac: 1.41193, offsetXFrac: -0.62864, offsetYFrac: -0.35983 },
+
+  // --- Entries below share one derivation, done for every kind whose art
+  // has a real transparent margin below the object (most of the current
+  // furniture catalog): each PNG's alpha channel was scanned in-browser
+  // (canvas getImageData over the already-loaded texture) for its real
+  // content bounding box — left/right/bottom as a fraction of the full
+  // image — since origin stays the sprite's default bottom-center (changing
+  // it would shift the sprite on screen, a visual change), that margin
+  // means the placement anchor sits BELOW the real object in screen space.
+  // A screen-space gap isn't a simple world-Y offset under this isometric
+  // shear (screenX=(wx-wy)*0.7, screenY=(wx+wy)*0.35) — a purely vertical
+  // screen delta maps to EQUAL parts world X and Y (solved the same exact
+  // inverse used throughout this table). Skipping that step is what left
+  // sofa3/cat-house/etc.'s boxes sitting beside their sprite instead of on
+  // it. Width/depth chosen by eye off the same alpha bbox (trimmed narrower
+  // than the raw bbox for anything whose art reads wider than its true
+  // floor base, e.g. a plant's foliage); offset computed from it.
+  //
+  // bed.png: headboard bed + 2 matching nightstands/lamps, footprint spans
+  // the full composite, centered.
+  bed: { depthFrac: 0.18, lengthFrac: 1.0, offsetXFrac: -0.0591, offsetYFrac: -0.5464 },
+  // cozy.png: corner sectional + side table (w/ speaker) + floor lamp —
+  // footprint covers the sectional's own solid base; the lamp (thin pole on
+  // a small round foot) and side table are left non-colliding rather than
+  // inflating the box to reach them (same tradeoff as tv's floor speakers).
+  cozy: { depthFrac: 0.85, lengthFrac: 0.289, offsetXFrac: -0.2448, offsetYFrac: -0.3711 },
+  // Etable.png: ornate console cabinet with decor (frame/vase/phone) on top
+  // — footprint is the cabinet body only, decor doesn't collide.
+  etable: { depthFrac: 0.55, lengthFrac: 0.2475, offsetXFrac: -0.1089, offsetYFrac: -0.2326 },
+  // dining.png: square table + 2 chairs.
+  dining: { depthFrac: 0.55, lengthFrac: 0.3025, offsetXFrac: -0.0917, offsetYFrac: -0.2312 },
+  // cat-house.png: roofed cat house on short legs — footprint is the base
+  // between the legs, narrower than the overhanging roof.
+  "cat-house": { depthFrac: 0.55, lengthFrac: 0.4125, offsetXFrac: -0.1679, offsetYFrac: -0.3692 },
+  // cat-tower.png: tall multi-platform tower — footprint is the base
+  // platform, narrower than the wider top perch.
+  "cat-tower": { depthFrac: 0.45, lengthFrac: 0.3825, offsetXFrac: -0.0578, offsetYFrac: -0.2699 },
+  // cat-toys.png: small toys scattered flat on the floor — thin, minor
+  // footprint, mostly to keep Mimi from reading as walking "through" them.
+  "cat-toys": { depthFrac: 0.6, lengthFrac: 0.27, offsetXFrac: -0.1167, offsetYFrac: -0.2813 },
+  // sofa3.png: front-facing cream sofa, base close to full sprite width.
+  sofa3: { depthFrac: 0.8, lengthFrac: 0.336, offsetXFrac: -0.2483, offsetYFrac: -0.4163 },
+  // almari4.png: tall wardrobe, front view, shallow depth.
+  almari4: { depthFrac: 0.85, lengthFrac: 0.255, offsetXFrac: -0.083, offsetYFrac: -0.1983 },
+  // dressingtable.png: simple desk with a drawer tower on one end.
+  dressingtable: { depthFrac: 0.85, lengthFrac: 0.2975, offsetXFrac: -0.0136, offsetYFrac: -0.1752 },
+  // Bookshelf1.png: large corner L-shaped bookshelf/cabinet — same
+  // over-cover-the-notch tradeoff as kitchen's corner counter.
+  bookshelf1: { depthFrac: 0.85, lengthFrac: 0.4675, offsetXFrac: -0.0834, offsetYFrac: -0.3178 },
+  // g3-g11: potted plants — footprint is the pot/base, well narrower than
+  // the foliage's spread.
+  g3: { depthFrac: 0.35, lengthFrac: 0.2975, offsetXFrac: -0.1824, offsetYFrac: -0.1889 },
+  g4: { depthFrac: 0.4, lengthFrac: 0.34, offsetXFrac: -0.0609, offsetYFrac: -0.2444 },
+  g5: { depthFrac: 0.5, lengthFrac: 0.425, offsetXFrac: -0.3093, offsetYFrac: -0.456 },
+  g6: { depthFrac: 0.65, lengthFrac: 0.26, offsetXFrac: -0.2132, offsetYFrac: -0.3405 }, // three pots side by side
+  g7: { depthFrac: 0.55, lengthFrac: 0.3025, offsetXFrac: -0.1786, offsetYFrac: -0.2703 }, // wide flat succulent bowl
+  g8: { depthFrac: 0.4, lengthFrac: 0.34, offsetXFrac: -0.2951, offsetYFrac: -0.4509 },
+  g11: { depthFrac: 0.4, lengthFrac: 0.34, offsetXFrac: -0.1207, offsetYFrac: -0.2907 },
 };
 
 /**
  * A piece's footprint size and its center's offset from item.x/item.y, both
  * in the piece's own unrotated local frame (local +X = the sprite's declared
- * "right", local +Y = "further from camera"/north). computeFootprintRect
+ * "right", local +Y = "further from camera"/north). computeFootprintObb
  * rotates this local rect by item.rotation to get the true world-space
  * footprint — see there.
  */
@@ -185,7 +317,7 @@ function localFootprint(kind: string, bw: number): LocalFootprint {
       offsetY: measured.offsetYFrac * bw,
     };
   }
-  const width = bw * FOOTPRINT_WIDTH_TRIM;
+  const width = bw * footprintWidthFrac(kind);
   const depth = width * footprintDepthRatio(kind);
   // item.x/y is the piece's FRONT (camera-facing) floor edge, not its
   // center, so the footprint extends one full depth backward (north, local
@@ -194,49 +326,43 @@ function localFootprint(kind: string, bw: number): LocalFootprint {
 }
 
 /**
- * Bounding box of a `width` x `depth` rectangle centered at (cx, cy) and
- * rotated by `rotationDeg` around that center. Arcade physics static bodies
- * are axis-aligned rects, so a rotation that isn't a multiple of 90 degrees
- * can't be represented exactly — this returns its tight axis-aligned
- * bounding box instead, which always fully covers the true rotated
- * footprint (never underestimates it, so Mimi can never clip through a
- * rotated corner) at the cost of a small amount of extra clearance on the
- * diagonal. At 0/90/180/270, cos/sin land on 0 or 1 and this is exact.
- */
-function rotateRectAABB(cx: number, cy: number, width: number, depth: number, rotationDeg: number): { x: number; y: number; w: number; h: number } {
-  const rad = (rotationDeg * Math.PI) / 180;
-  const cos = Math.abs(Math.cos(rad));
-  const sin = Math.abs(Math.sin(rad));
-  const w = width * cos + depth * sin;
-  const h = width * sin + depth * cos;
-  return { x: cx - w / 2, y: cy - h / 2, w, h };
-}
-
-/**
+ * LEGACY FALLBACK ONLY. This guessed-ratio footprint (width/depth fractions,
+ * MEASURED_FOOTPRINTS' hand-picked-off-screenshots table, the corner-stretch
+ * hack) is what the manual collision editor (see Collision-mode methods
+ * below) replaces — it now runs only for a kind with no hand-drawn shape in
+ * `collisionShapes` yet, so nothing goes walk-through the moment that map is
+ * empty. Once a kind has an authored shape, footprintPolygons() never calls
+ * this for it again.
+ *
  * Solid floor footprint (world px — same flat space as collision.ts's
  * room-furniture rects) for one placed item, built ONLY from its own
  * world-space state: item.x/item.y (position), baseDisplayWidth(kind)*scale
  * (size), footprintDepthRatio(kind) (depth), and item.rotation (orientation)
- * — see localFootprint's doc comment for what "local" means. Those five
- * values are the single source of truth; nothing here reads the sprite's
- * pixels or calls project()/unproject() — rendering and collision are fully
- * decoupled, so re-skinning a kind's PNG or nudging its display anchor can
- * never silently move its hitbox. The local offset is rotated by
- * item.rotation before being added to item.x/item.y, so a rotated piece's
- * footprint pivots around its own anchor exactly like its sprite does.
+ * — see localFootprint's doc comment for what "local" means. The local
+ * offset is rotated by item.rotation before being added to item.x/item.y, so
+ * a rotated piece's footprint pivots around its own anchor exactly like its
+ * sprite does.
  *
- * A prior version derived the footprint by reading the sprite's on-screen
- * bounding box (or its alpha channel) and unprojecting screen-space samples
- * back to world space. Both approaches estimate the footprint from how the
- * sprite happens to look on screen, which is exactly backwards: the footprint
- * should decide the render, not the other way around. Sampling pixels is
- * also lossy on its own terms — project()'s 45-degree shear means the
- * axis-aligned world-space box enclosing an unprojected screen rect is
- * always inflated (driven by the SUM of the screen rect's width and height,
- * not either alone) — which is what left big collision squares sitting over
- * open floor with nothing under them.
+ * Returned as an oriented rectangle (center + half-extents + angle) —
+ * footprintPolygons() converts it to a 4-corner polygon (obbToPolygon) so it
+ * flows through the same general SAT test (polygonOverlapsAabb) an authored
+ * shape does.
+ *
+ * extendFootprintToCorner's back-wall stretch only makes sense for an
+ * axis-aligned rect (it slides individual edges out to the room's wall
+ * faces), so BACK_WALL_CORNER_KINDS keeps the old rect math and reports it
+ * as an angle-0 obb — those kinds (currently just "kitchen") are always
+ * placed unrotated in practice.
  */
-function computeFootprintRect(item: PlacedItem): { x: number; y: number; w: number; h: number } {
+interface LegacyFootprintObb {
+  cx: number;
+  cy: number;
+  halfW: number;
+  halfH: number;
+  angleDeg: number;
+}
+
+function computeFootprintObb(item: PlacedItem): LegacyFootprintObb {
   const bw = baseDisplayWidth(item.kind) * item.scale;
   const local = localFootprint(item.kind, bw);
   const rad = (item.rotation * Math.PI) / 180;
@@ -244,11 +370,42 @@ function computeFootprintRect(item: PlacedItem): { x: number; y: number; w: numb
   const sin = Math.sin(rad);
   const centerX = item.x + local.offsetX * cos - local.offsetY * sin;
   const centerY = item.y + local.offsetX * sin + local.offsetY * cos;
-  const rect = rotateRectAABB(centerX, centerY, local.width, local.depth, item.rotation);
-  return extendFootprintToCorner(rect, item.kind);
+
+  if (BACK_WALL_CORNER_KINDS.has(canonicalKind(item.kind))) {
+    const rect = extendFootprintToCorner(
+      { x: centerX - local.width / 2, y: centerY - local.depth / 2, w: local.width, h: local.depth },
+      item.kind,
+    );
+    return { cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2, halfW: rect.w / 2, halfH: rect.h / 2, angleDeg: 0 };
+  }
+
+  return { cx: centerX, cy: centerY, halfW: local.width / 2, halfH: local.depth / 2, angleDeg: item.rotation };
 }
 
 const ROTATE_STEP_DEG = 45;
+/** Minimum world-px extent (each axis) a click-drag rectangle needs to commit as a shape — well above a stray click's few-pixel jitter, so an accidental tap can never leave a sliver behind. */
+const MIN_SHAPE_SIZE_PX = 4;
+/** Minimum world-px² area (either tool) a shape needs to actually commit — belt-and-suspenders alongside MIN_SHAPE_SIZE_PX for the rectangle tool, and the only guard for the polygon tool (3+ nearly-collinear points can pass the point-count check but still enclose ~no area). */
+const MIN_SHAPE_AREA_PX2 = 16;
+/** Two clicks on the same shape faster than this count as a double-click (focus toggle) rather than two separate selects. */
+const DOUBLE_CLICK_MS = 350;
+/** Cap on how many undo snapshots one editing session keeps, so a long drawing session can't grow the stack unbounded. */
+const UNDO_HISTORY_LIMIT = 50;
+/** Drawn vertex-handle radius (screen px). */
+const VERTEX_RADIUS_PX = 5;
+/** Grabbable radius (screen px) — bigger than the drawn dot so a vertex is easy to grab without pixel-precise aim. */
+const VERTEX_HIT_RADIUS_PX = 12;
+
+/** Shoelace-formula polygon area (absolute value, world px²) — used only to reject degenerate near-zero-area shapes before they're saved (see addShape), not part of the runtime collision math. */
+function polygonArea(points: readonly Point[]): number {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) / 2;
+}
 const SELECTED_TINT = 0x8fd0ff;
 
 /** Fallback display width (tiles) for a PNG with no entry below — e.g. a new asset just dropped into public/furniture/. */
@@ -355,9 +512,16 @@ interface PlacedItem extends FurnitureEditorItem {
  * that data, only adds its own sprites on top. Its layout (game/data/
  * furnitureLayout.json, the project's default) always spawns; only the
  * drag/edit tooling itself is dev-only (gated by `active`, see
- * setActive/GameCanvas.tsx). collision.ts reads collisionRects() below once,
- * right after load(), to turn every spawned item's rendered footprint into
- * solid physics geometry.
+ * setActive/GameCanvas.tsx). Player.ts calls footprintPolygons() below every
+ * frame to resolve Mimi's movement against every spawned item's exact
+ * (possibly rotated) footprint — see collisionShapes.ts.
+ *
+ * Two editor sub-modes (`mode`, see setMode): "place" is the original
+ * drag/rotate/resize placement tool; "collision" is the manual
+ * collision-shape editor — pick a kind, draw polygons/rectangles directly
+ * over an unrotated preview of it, save. Both share the same `active` gate
+ * and the same pointer/drag/wheel listeners registered once below, branching
+ * on `mode` internally, rather than doubling up input wiring.
  *
  * ponytail: no drop shadow under editor-placed items (existing furnitureSystem
  * pieces get one via a separate Graphics object kept in sync on every
@@ -367,6 +531,8 @@ interface PlacedItem extends FurnitureEditorItem {
 export class FurnitureEditor {
   private readonly items = new Map<string, PlacedItem>();
   private active = false;
+  /** Set by StudioScene while a Space+drag camera pan is in progress, so a drag that's really panning the camera never also places an item, draws a shape, or grabs a placed piece. */
+  private inputSuspended = false;
   private selectedId: string | null = null;
   private pendingKind: string | null = null;
   private ghost: Phaser.GameObjects.Image | null = null;
@@ -374,10 +540,53 @@ export class FurnitureEditor {
   /** Set by GameCanvas: fired whenever the selection or the selected item's scale changes, so the sidebar's resize slider can track it (including changes made via wheel-resize, not just the slider itself). */
   onSelectionChange: ((selection: FurnitureSelection | null) => void) | null = null;
 
+  // --- Collision-shape editing state (collisionActive) ---
+  /** Whether the Collision Editor (a separate top-level toggle from Place mode's `active`) is open — mutually exclusive with `active`, enforced by setActive/setCollisionActive, so collision editing can never also drag/place furniture. */
+  private collisionActive = false;
+  /** Working copy of every kind's authored shapes — read-only fallback data now (seeds a fresh instance's first edit, see currentEffectiveLocalShapes); nothing in the redesigned Collision Editor writes to this map directly anymore, only to instanceCollisionShapes below. Populated from the Phaser loader cache in load(), not a static import — see preloadFurnitureEditorData. */
+  private readonly collisionShapes: CollisionShapeMap = {};
+  /** Per-placed-instance collision overrides, keyed by item id — same local (fraction-of-baseWidth) point convention as collisionShapes, so both flow through the same transform/edit math. Every shape drawn in the Collision Editor lands here, scoped to the one placed item that was clicked. Populated from the Phaser loader cache in load(). */
+  private readonly instanceCollisionShapes = new Map<string, Point[][]>();
+  /** Canonical kind of whichever item editingInstanceId names — cached alongside it purely so baseWidth lookups don't need an extra items.get() at every mutation site. Always set/cleared together with editingInstanceId. */
+  private editingKind: string | null = null;
+  /** The placed item currently being edited, directly in its real world position/rotation/scale — see beginInstanceCollisionEdit. Every edit target is a real placed instance now; there is no more "edit a kind's shared template on a throwaway preview" mode. */
+  private editingInstanceId: string | null = null;
+  /** The tint applied to the instance currently being edited (see beginInstanceCollisionEdit) — tracked so teardownCollisionUi can clear it without needing to look the item back up (it may since have been deleted). */
+  private editingInstanceTintedImage: Phaser.GameObjects.Image | null = null;
+  /** Set by a placed item's own pointerdown handler (collision mode only) when the click landed on a real, opaque pixel of its sprite — read once by the very next scene-wide handleCollisionPointerDown as a fallback ("clicked real furniture, no shape drawn there yet") after its own shape/global-collision hit-tests come up empty, then cleared. Phaser's default topOnly input means at most one item's handler can set this per click. */
+  private lastOpaqueHitId: string | null = null;
+  /** Select/Edit (default: click to select+move+resize), Draw Rectangle, or Draw Polygon — see setTool. Auto-reverts to "select" the moment a shape commits (addShape), so drawing never silently stacks shape after shape. */
+  private currentTool: CollisionTool = "select";
+  private drawingPoints: Point[] | null = null;
+  private rectDragStart: Point | null = null;
+  private lastPointerFloor: Point = { x: 0, y: 0 };
+  private draggingShapeIndex: number | null = null;
+  private shapeDragLast: Point | null = null;
+  /** Whether the in-progress whole-shape drag has already pushed its pre-drag undo snapshot — pushed lazily on the first real move so a plain click-to-select (no movement) never eats an undo step. */
+  private shapeDragSnapshotPushed = false;
+  private selectedShapeIndex: number | null = null;
+  /** Set by double-clicking a shape: every other shape is drawn dimmed (and its vertex handles hidden) so the focused one is easy to work on. Cleared by focusing again, selecting elsewhere, or switching kind. */
+  private focusedShapeIndex: number | null = null;
+  private lastClickShapeIndex: number | null = null;
+  private lastClickTime = 0;
+  /** Snapshots of the editing instance's shape array, most-recent last — Undo pops one off here onto redoStack and vice versa. Reset whenever the edit target changes (see beginInstanceCollisionEdit). */
+  private undoStack: Point[][][] = [];
+  private redoStack: Point[][][] = [];
+  private shapesGraphics: Phaser.GameObjects.Graphics | null = null;
+  private vertexHandles: Phaser.GameObjects.Arc[] = [];
+
+  /** Set by GameCanvas: fired whenever collision-editing state (shape count, selection, undo/redo availability) for the item currently being edited changes, so the panel can reflect it. */
+  onCollisionShapesChange: ((info: CollisionEditInfo | null) => void) | null = null;
+  /** Set by GameCanvas: fired whenever the active tool changes, including the automatic revert to "select" after a shape commits — see currentTool. */
+  onToolChange: ((tool: CollisionTool) => void) | null = null;
+
   constructor(private readonly scene: Phaser.Scene) {
     scene.input.on("pointermove", this.handlePointerMove, this);
     scene.input.on("pointerdown", this.handleCanvasPointerDown, this);
+    scene.input.on("pointerup", this.handlePointerUp, this);
     scene.input.on("drag", this.handleDrag, this);
+    scene.input.on("dragstart", this.handleDragStart, this);
+    scene.input.on("dragend", this.handleDragEnd, this);
     // Only scales the selected item while the pointer is over it, so it
     // doesn't fight StudioScene's own wheel-zoom handler on every scroll —
     // ponytail: the two still both fire when hovering a selected item during
@@ -387,14 +596,30 @@ export class FurnitureEditor {
     scene.input.keyboard?.on("keydown-R", this.handleRotateKey, this);
     scene.input.keyboard?.on("keydown-DELETE", this.handleDeleteKey, this);
     scene.input.keyboard?.on("keydown-BACKSPACE", this.handleDeleteKey, this);
+    scene.input.keyboard?.on("keydown-ESC", this.handleEscapeKey, this);
   }
 
+  /** Called by StudioScene's Space+drag camera pan around its start/end — see the field's own comment. */
+  setInputSuspended(suspended: boolean): void {
+    this.inputSuspended = suspended;
+  }
+
+  /** Opens/closes the Place (furniture placement) tool — mutually exclusive with the Collision Editor, see setCollisionActive. */
   setActive(active: boolean): void {
     this.active = active;
+    if (active && this.collisionActive) this.setCollisionActive(false);
     if (!active) {
       this.cancelPlacement();
       this.select(null);
     }
+  }
+
+  /** Opens/closes the Collision Editor — mutually exclusive with Place mode, so collision editing can never also drag/place/resize furniture. Closing tears down its selection/drawing state and restores normal game input the instant it's called (see GameCanvas's close handler). */
+  setCollisionActive(active: boolean): void {
+    if (this.collisionActive === active) return;
+    this.collisionActive = active;
+    if (active && this.active) this.setActive(false);
+    if (!active) this.endCollisionEdit();
   }
 
   /** Called by the sidebar when a thumbnail is clicked: arms a ghost that follows the pointer until the next canvas click. */
@@ -406,23 +631,58 @@ export class FurnitureEditor {
     this.applyScale(this.ghost, kind, 1);
   }
 
-  /** Spawns every item from game/data/furnitureLayout.json (the project's default layout). Call once at scene boot. */
+  /**
+   * Reads the three editor-data files back out of the Phaser loader cache
+   * (populated by preloadFurnitureEditorData, guaranteed ready by the time
+   * create() runs — same guarantee every preloaded sprite already gets) and
+   * spawns every layout item. Call once at scene boot, after
+   * preloadFurnitureEditorData ran in preload().
+   */
   load(): void {
-    for (const entry of defaultLayout) {
-      if (isFurnitureEditorItem(entry)) this.spawn(entry);
+    const layout = this.scene.cache.json.get(LAYOUT_CACHE_KEY) as unknown;
+    const collisionShapes = this.scene.cache.json.get(COLLISION_SHAPES_CACHE_KEY) as CollisionShapeMap | undefined;
+    const instanceCollisionShapes = this.scene.cache.json.get(INSTANCE_COLLISION_SHAPES_CACHE_KEY) as Record<string, Point[][]> | undefined;
+
+    Object.assign(this.collisionShapes, collisionShapes ?? {});
+    for (const [id, shapes] of Object.entries(instanceCollisionShapes ?? {})) this.instanceCollisionShapes.set(id, shapes);
+
+    if (Array.isArray(layout)) {
+      for (const entry of layout) {
+        if (isFurnitureEditorItem(entry)) this.spawn(entry);
+      }
     }
   }
 
-  /** Solid collision rects (world px) for every currently spawned item — call after load(). */
-  collisionRects(): { x: number; y: number; w: number; h: number }[] {
-    return Array.from(this.items.values()).map(computeFootprintRect);
+  /**
+   * Solid collision footprints (world px) for every currently spawned item
+   * that has an actual hand-drawn shape. No fallback: a kind/instance with
+   * nothing drawn yet in the editor's Collision mode is walk-through, not
+   * auto-guessed — collision only exists where someone explicitly drew it.
+   * Recomputed live every call so it always reflects current
+   * position/rotation/scale, including mid-drag/rotate/resize.
+   */
+  footprintPolygons(): FootprintPolygon[] {
+    const result: FootprintPolygon[] = [];
+    for (const item of this.items.values()) {
+      const canonical = canonicalKind(item.kind);
+      const instanceOverride = this.instanceCollisionShapes.get(item.id);
+      const authored = instanceOverride && instanceOverride.length > 0 ? instanceOverride : this.collisionShapes[canonical];
+      if (!authored || authored.length === 0) continue;
+      const bw = baseDisplayWidth(item.kind);
+      for (const points of computeItemFootprintPolygons(item, authored, bw)) {
+        result.push({ points, authored: true });
+      }
+    }
+    return result;
   }
 
   /**
-   * Serializes every placed item's world x/y/rotation/scale and persists it
-   * as the project's default layout (game/data/furnitureLayout.json, via the
-   * dev-only save API route) — the same layout load() reads on next boot, in
-   * this browser or a fresh one. Throws on failure so the sidebar can surface it.
+   * Serializes every placed item's world x/y/rotation/scale AND every kind's
+   * authored collision shapes, persisting both as the project's defaults
+   * (game/data/furnitureLayout.json + game/data/furnitureCollisionShapes.json,
+   * via their dev-only save API routes) — one Save action, two files, the
+   * same pair load()/collisionShapes read on next boot. Throws on failure so
+   * the sidebar can surface it.
    */
   async save(): Promise<void> {
     const data: FurnitureEditorItem[] = Array.from(this.items.values()).map(({ id, kind, x, y, rotation, scale }) => ({
@@ -433,12 +693,42 @@ export class FurnitureEditor {
       rotation,
       scale,
     }));
-    const response = await fetch(SAVE_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) throw new Error(`Save failed (${response.status})`);
+    const [layoutResponse, shapesResponse] = await Promise.all([
+      fetch(SAVE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+      fetch(SAVE_COLLISION_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(this.collisionShapes),
+      }),
+    ]);
+    if (!layoutResponse.ok) throw new Error(`Save failed (${layoutResponse.status})`);
+    if (!shapesResponse.ok) throw new Error(`Collision shape save failed (${shapesResponse.status})`);
+  }
+
+  /**
+   * Persists every placed item's own collision override (in-memory
+   * instanceCollisionShapes) to disk in one action — the Collision Editor's
+   * single Save button, covering every piece touched this session, not just
+   * whichever one is currently selected. Reuses the same upsert-one-item
+   * endpoint save() also uses for a single instance (see the API route's
+   * write-queue serialization), just called once per touched item.
+   */
+  async saveAllInstanceCollisions(): Promise<void> {
+    const entries = Array.from(this.instanceCollisionShapes.entries());
+    const responses = await Promise.all(
+      entries.map(([itemId, shapes]) =>
+        fetch(SAVE_INSTANCE_COLLISION_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ itemId, shapes }),
+        }),
+      ),
+    );
+    if (responses.some((r) => !r.ok)) throw new Error("Collision save failed");
   }
 
   private spawn(data: FurnitureEditorItem): void {
@@ -458,7 +748,36 @@ export class FurnitureEditor {
     const item: PlacedItem = { ...data, image, baseScale };
     this.items.set(data.id, item);
 
-    image.on("pointerdown", () => this.select(item.id));
+    image.on("pointerdown", (_pointer: Phaser.Input.Pointer, localX: number, localY: number) => {
+      if (this.inputSuspended) return;
+      if (this.collisionActive) {
+        // Just records the hit — handleCollisionPointerDown (the scene-wide
+        // handler, which always fires right after this) is the one place
+        // that decides what a click actually does, so shape hits and
+        // sprite hits can't race for the same click. Phaser's default
+        // topOnly input means at most one item's handler runs per click.
+        if (this.isOpaqueAt(image, localX, localY)) this.lastOpaqueHitId = item.id;
+        return;
+      }
+      this.select(item.id);
+    });
+  }
+
+  /**
+   * True if (localX, localY) — the pointer's position local to `image`, as
+   * Phaser hands it to a pointerdown listener — lands on a non-transparent
+   * pixel of its texture. Furniture PNGs carry large transparent margins (see
+   * the MEASURED_FOOTPRINTS doc comment), so neighboring pieces' plain
+   * bounding-box hit areas overlap heavily in a furnished room; without this
+   * check, clicking visibly on one piece while editing another can silently
+   * hijack the edit target to whichever unrelated neighbor's invisible margin
+   * happens to extend under the pointer. Scoped to just that one decision —
+   * Place mode's drag-grab (and everything else) keeps the original forgiving
+   * bounding-box hit area untouched.
+   */
+  private isOpaqueAt(image: Phaser.GameObjects.Image, localX: number, localY: number): boolean {
+    const alpha = this.scene.textures.getPixelAlpha(Math.round(localX), Math.round(localY), image.texture.key, image.frame.name);
+    return alpha !== null && alpha > 0;
   }
 
   /**
@@ -511,16 +830,186 @@ export class FurnitureEditor {
   }
 
   private handlePointerMove(pointer: Phaser.Input.Pointer): void {
+    if (this.inputSuspended) return;
+    if (this.collisionActive) {
+      if (!this.editingInstanceId) return;
+      const floor = unproject(pointer.worldX, pointer.worldY);
+      this.lastPointerFloor = floor;
+      if (this.draggingShapeIndex !== null && this.shapeDragLast) {
+        const dx = floor.x - this.shapeDragLast.x;
+        const dy = floor.y - this.shapeDragLast.y;
+        if (dx !== 0 || dy !== 0) {
+          if (!this.shapeDragSnapshotPushed) {
+            this.pushUndoSnapshot();
+            this.shapeDragSnapshotPushed = true;
+          }
+          this.moveShapeBy(this.draggingShapeIndex, dx, dy);
+          this.shapeDragLast = floor;
+          this.rebuildVertexHandles();
+        }
+        return;
+      }
+      this.redrawShapes();
+      return;
+    }
     if (!this.active || !this.ghost) return;
     this.ghost.setPosition(pointer.worldX, pointer.worldY);
   }
 
+  /**
+   * True unless `pointer`'s underlying DOM event fired on some element other
+   * than the game canvas. Phaser's MouseManager deliberately also listens on
+   * `window` for mousedown/mouseup (so a drag that ends outside the canvas
+   * still releases cleanly) and forwards those into the exact same
+   * `scene.input` pointerdown/pointerup stream — so clicking a sidebar
+   * button while Draw Collision is armed fires a real pointerdown/up here
+   * too, at that button's screen position translated into a bogus world
+   * point. Every entry point that can START a new action (a polygon point,
+   * a rect drag, a placement drop) must check this first, or clicking the
+   * sidebar silently appends a stray vertex or drops a ghost out toward it.
+   */
+  private isPointerFromCanvas(pointer: Phaser.Input.Pointer): boolean {
+    const target = pointer.event?.target;
+    return !target || target === this.scene.sys.game.canvas;
+  }
+
   /** Drops a pending ghost at the clicked point; does nothing if no placement is armed (so it never interferes with normal item selection/drag clicks). */
   private handleCanvasPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (this.inputSuspended || !this.isPointerFromCanvas(pointer)) return;
+    if (this.collisionActive) {
+      this.handleCollisionPointerDown(pointer);
+      return;
+    }
     if (!this.active || !this.pendingKind) return;
     const kind = this.pendingKind;
     this.cancelPlacement();
     this.dropItemAt(kind, pointer.worldX, pointer.worldY);
+  }
+
+  /**
+   * Collision mode's click handler — the one place that decides what a
+   * click does, in priority order: (1) a shape belonging to whatever's
+   * already the edit target (cheapest, keeps working the same piece fast),
+   * (2) any OTHER item's resolved collision anywhere in the house — this is
+   * "clicking any existing collision selects it", the direct replacement
+   * for the old asset-list picker, (3) a real furniture sprite with no
+   * shape drawn yet (see lastOpaqueHitId, set by spawn()'s pointerdown just
+   * before this runs), which becomes the new edit target ready to draw on,
+   * (4) empty floor: starts a new shape if a target + draw tool are both
+   * active, otherwise clears the selection.
+   */
+  private handleCollisionPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (!this.collisionActive) return;
+    const floor = unproject(pointer.worldX, pointer.worldY);
+    const opaqueHitId = this.lastOpaqueHitId;
+    this.lastOpaqueHitId = null;
+
+    if (this.editingInstanceId) {
+      const shapes = this.currentShapes() ?? [];
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        if (pointInPolygon(floor, this.shapeWorldPoints(shapes[i]))) {
+          this.setToolInternal("select");
+          this.selectShape(i);
+          this.draggingShapeIndex = i;
+          this.shapeDragLast = floor;
+          this.shapeDragSnapshotPushed = false;
+          return;
+        }
+      }
+    }
+
+    const globalHit = this.hitTestAnyCollision(floor);
+    if (globalHit) {
+      this.setToolInternal("select");
+      this.beginInstanceCollisionEdit(globalHit.itemId);
+      this.selectShape(globalHit.shapeIndex);
+      this.draggingShapeIndex = globalHit.shapeIndex;
+      this.shapeDragLast = floor;
+      this.shapeDragSnapshotPushed = false;
+      return;
+    }
+
+    if (opaqueHitId && opaqueHitId !== this.editingInstanceId) {
+      this.setToolInternal("select");
+      this.beginInstanceCollisionEdit(opaqueHitId);
+      return;
+    }
+
+    if (this.editingInstanceId && this.currentTool !== "select") {
+      if (this.currentTool === "rect") this.rectDragStart = floor;
+      else this.drawingPoints = [...(this.drawingPoints ?? []), floor];
+      this.redrawShapes();
+      return;
+    }
+
+    this.selectShape(null);
+  }
+
+  /**
+   * Every placed item's currently-effective world-space collision polygons
+   * (own override, else its kind's default), hit-tested against `floor` —
+   * the global "clicking any existing collision selects it" scan. Skips
+   * whichever item is already the edit target (handleCollisionPointerDown's
+   * own faster first-pass check already covers it). Insertion-order
+   * tie-break for overlapping footprints — good enough for a house-sized
+   * furniture count, not worth depth-sorting.
+   */
+  private hitTestAnyCollision(floor: Point): { itemId: string; shapeIndex: number } | null {
+    for (const item of this.items.values()) {
+      if (item.id === this.editingInstanceId) continue;
+      const canonical = canonicalKind(item.kind);
+      const override = this.instanceCollisionShapes.get(item.id);
+      const authored = override && override.length > 0 ? override : this.collisionShapes[canonical];
+      if (!authored || authored.length === 0) continue;
+      const bw = baseDisplayWidth(item.kind);
+      const basis: FootprintItem = { x: item.x, y: item.y, rotation: item.rotation, scale: item.scale };
+      const worldPolygons = computeItemFootprintPolygons(basis, authored, bw);
+      for (let i = worldPolygons.length - 1; i >= 0; i--) {
+        if (pointInPolygon(floor, worldPolygons[i])) return { itemId: item.id, shapeIndex: i };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Commits a rectangle drag (click-drag corner to corner) as a new shape —
+   * requires a real minimum size so a barely-moved click can't leave a
+   * sliver shape behind (see addShape's own zero-area guard too). Releases
+   * any in-progress whole-shape drag. A release that didn't actually happen
+   * on the canvas (see isPointerFromCanvas — e.g. the mouseup landed on a
+   * sidebar button while a drag was in progress) still cancels the drag
+   * cleanly, it just never commits a shape built from that bogus position.
+   */
+  private handlePointerUp(pointer: Phaser.Input.Pointer): void {
+    if (this.inputSuspended) return;
+    if (this.collisionActive && this.editingInstanceId && this.rectDragStart) {
+      const start = this.rectDragStart;
+      this.rectDragStart = null;
+      if (this.isPointerFromCanvas(pointer)) {
+        const end = unproject(pointer.worldX, pointer.worldY);
+        if (Math.abs(end.x - start.x) > MIN_SHAPE_SIZE_PX && Math.abs(end.y - start.y) > MIN_SHAPE_SIZE_PX) {
+          this.addShape([
+            { x: start.x, y: start.y },
+            { x: end.x, y: start.y },
+            { x: end.x, y: end.y },
+            { x: start.x, y: end.y },
+          ]);
+        }
+      }
+      this.redrawShapes();
+    }
+    this.draggingShapeIndex = null;
+    this.shapeDragLast = null;
+  }
+
+  /** Pushes the pre-drag undo snapshot for a vertex-handle drag, once, the moment Phaser recognizes it as a real drag (past its own built-in threshold) — so a plain click on a handle with no movement never eats an undo step. */
+  private handleDragStart(_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject): void {
+    if (this.collisionActive && gameObject.getData("vertex")) this.pushUndoSnapshot();
+  }
+
+  /** Rebuilds vertex handles once a Phaser-managed drag (a vertex handle) finishes — done here rather than mid-drag so the handle being dragged is never destroyed out from under Phaser's own drag state. */
+  private handleDragEnd(_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject): void {
+    if (this.collisionActive && gameObject.getData("vertex")) this.rebuildVertexHandles();
   }
 
   /**
@@ -549,21 +1038,36 @@ export class FurnitureEditor {
     this.select(id);
   }
 
-  private handleDrag(_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.Image, dragX: number, dragY: number): void {
+  private handleDrag(_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject, dragX: number, dragY: number): void {
+    if (this.inputSuspended) return;
+    if (this.collisionActive) {
+      const vertex = gameObject.getData("vertex") as { shapeIndex: number; pointIndex: number } | undefined;
+      if (!vertex || !this.editingInstanceId) return;
+      const floor = unproject(dragX, dragY);
+      const bw = baseDisplayWidth(this.editingKind!);
+      const point = this.currentShapes()?.[vertex.shapeIndex]?.[vertex.pointIndex];
+      if (!point) return;
+      const local = worldPointToLocal(floor, this.editBasis(), bw);
+      point.x = local.x;
+      point.y = local.y;
+      (gameObject as Phaser.GameObjects.Arc).setPosition(dragX, dragY);
+      this.redrawShapes();
+      return;
+    }
     if (!this.active) return;
-    const item = this.findByImage(gameObject);
+    const item = this.findByImage(gameObject as Phaser.GameObjects.Image);
     if (!item) return;
     const dragged = unproject(dragX, dragY);
     const { x, y } = clampToRoomFloor(dragged.x, dragged.y);
     const anchor = project(x, y);
-    gameObject.setPosition(anchor.x, anchor.y);
+    (gameObject as Phaser.GameObjects.Image).setPosition(anchor.x, anchor.y);
     item.x = x;
     item.y = y;
-    gameObject.setDepth(visualDepth(x, y));
+    (gameObject as Phaser.GameObjects.Image).setDepth(visualDepth(x, y));
   }
 
   private handleWheel(pointer: Phaser.Input.Pointer, currentlyOver: Phaser.GameObjects.GameObject[], _dx: number, deltaY: number): void {
-    if (!this.active || !this.selectedId) return;
+    if (this.collisionActive || !this.active || !this.selectedId) return;
     const item = this.items.get(this.selectedId);
     if (!item || !currentlyOver.includes(item.image)) return;
     item.scale = Phaser.Math.Clamp(item.scale - Math.sign(deltaY) * SCALE_STEP, SCALE_MIN, SCALE_MAX);
@@ -572,7 +1076,7 @@ export class FurnitureEditor {
   }
 
   private handleRotateKey(): void {
-    if (!this.active || !this.selectedId) return;
+    if (this.collisionActive || !this.active || !this.selectedId) return;
     const item = this.items.get(this.selectedId);
     if (!item) return;
     item.rotation = (item.rotation + ROTATE_STEP_DEG) % 360;
@@ -580,6 +1084,10 @@ export class FurnitureEditor {
   }
 
   private handleDeleteKey(): void {
+    if (this.collisionActive) {
+      this.deleteSelectedShape();
+      return;
+    }
     if (!this.active || !this.selectedId) return;
     const item = this.items.get(this.selectedId);
     if (!item) return;
@@ -588,8 +1096,357 @@ export class FurnitureEditor {
     this.select(null);
   }
 
+  /** Cancels whatever collision shape is mid-draw (a rectangle drag still held, or polygon points already clicked) without committing it — so pressing Escape can always back out of a draw instead of it accidentally landing as a shape. */
+  private handleEscapeKey(): void {
+    if (!this.collisionActive || (!this.rectDragStart && !this.drawingPoints)) return;
+    this.rectDragStart = null;
+    this.drawingPoints = null;
+    this.redrawShapes();
+  }
+
   private findByImage(image: Phaser.GameObjects.Image): PlacedItem | undefined {
     for (const item of this.items.values()) if (item.image === image) return item;
     return undefined;
+  }
+
+  // --- Collision-shape editing (collisionActive) ---
+
+  /**
+   * Enters collision-shape editing for one already-placed instance, directly
+   * in its real world position/rotation/scale — no preview sprite, always
+   * the real placed piece. The instance's editing buffer is seeded from
+   * whatever currently determines its actual collision (its own saved
+   * override, else its kind's shared default, else the legacy auto-guessed
+   * footprint — see currentEffectiveLocalShapes) the first time it's
+   * opened, so the shown footprint always matches what's really colliding
+   * right now; reselecting the same instance later in this session reuses
+   * whatever's already in the buffer instead of re-seeding over in-progress
+   * edits. Undo history starts empty for every switch, so it never carries
+   * stray steps over from the last item.
+   */
+  private beginInstanceCollisionEdit(itemId: string): void {
+    if (!this.collisionActive) return;
+    const item = this.items.get(itemId);
+    if (!item) return;
+    this.teardownCollisionUi();
+    this.editingKind = canonicalKind(item.kind);
+    this.editingInstanceId = itemId;
+    if (!this.instanceCollisionShapes.has(itemId)) {
+      this.instanceCollisionShapes.set(itemId, this.currentEffectiveLocalShapes(item));
+    }
+    item.image.setTint(SELECTED_TINT);
+    this.editingInstanceTintedImage = item.image;
+    this.shapesGraphics = this.scene.add.graphics().setDepth(4050);
+    this.rebuildVertexHandles();
+  }
+
+  /** Tears down the shape graphics and vertex handles for whichever instance is currently being edited, without touching editingKind/editingInstanceId themselves — shared by beginInstanceCollisionEdit (switching target) and endCollisionEdit (leaving Collision mode entirely). */
+  private teardownCollisionUi(): void {
+    if (this.editingInstanceTintedImage) {
+      this.editingInstanceTintedImage.clearTint();
+      this.editingInstanceTintedImage = null;
+    }
+    this.shapesGraphics?.destroy();
+    this.shapesGraphics = null;
+    this.destroyVertexHandles();
+    this.drawingPoints = null;
+    this.rectDragStart = null;
+    this.draggingShapeIndex = null;
+    this.shapeDragLast = null;
+    this.selectedShapeIndex = null;
+    this.focusedShapeIndex = null;
+    this.currentTool = "select";
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+
+  /** Leaves collision editing entirely (deactivating the Collision Editor, or clicking empty floor with no target active) — no-op if nothing is being edited. */
+  private endCollisionEdit(): void {
+    this.teardownCollisionUi();
+    this.editingKind = null;
+    this.editingInstanceId = null;
+    this.onCollisionShapesChange?.(null);
+  }
+
+  /** Switches the active tool — Select/Edit (click-to-select, drag to move, drag a vertex to resize), Draw Rectangle, or Draw Polygon. Clears any shape mid-draw so a stray rectangle-drag or polygon click can't get finished under a different tool. */
+  setTool(tool: CollisionTool): void {
+    this.setToolInternal(tool);
+    this.rectDragStart = null;
+    this.drawingPoints = null;
+    this.redrawShapes();
+  }
+
+  /** Sets currentTool and notifies onToolChange — the one path both the public setTool() and addShape's auto-revert-to-select go through, so the panel's tool buttons always reflect reality even when the switch happens implicitly. */
+  private setToolInternal(tool: CollisionTool): void {
+    if (this.currentTool === tool) return;
+    this.currentTool = tool;
+    this.onToolChange?.(tool);
+  }
+
+  /** Closes the in-progress polygon (see handleCollisionPointerDown) as a new shape — the sidebar's "Finish Polygon" button, since a click-driven point list has no natural "last click" to auto-close on. Needs at least 3 points and a non-trivial area (see addShape); anything less just cancels the in-progress polygon. */
+  finishPolygon(): void {
+    const points = this.drawingPoints;
+    this.drawingPoints = null;
+    if (points && points.length >= 3) this.addShape(points);
+    else this.redrawShapes();
+  }
+
+  /** Removes the shape currently selected (click a shape to select it) — the panel's "Delete" button and the Delete/Backspace key. No-op with nothing selected. */
+  deleteSelectedShape(): void {
+    if (!this.editingInstanceId || this.selectedShapeIndex === null) return;
+    const shapes = this.currentShapes();
+    if (!shapes || !shapes[this.selectedShapeIndex]) return;
+    this.pushUndoSnapshot();
+    shapes.splice(this.selectedShapeIndex, 1);
+    this.selectedShapeIndex = null;
+    this.focusedShapeIndex = null;
+    this.rebuildVertexHandles();
+  }
+
+  /** Wipes every shape for the item being edited in one click — the panel's "Clear All" button. Undo restores it all in one step, so this is safe to use freely rather than deleting shapes one at a time. */
+  clearAllCollision(): void {
+    if (!this.editingInstanceId) return;
+    const shapes = this.currentShapes();
+    if (!shapes || shapes.length === 0) return;
+    this.pushUndoSnapshot();
+    shapes.length = 0;
+    this.selectedShapeIndex = null;
+    this.focusedShapeIndex = null;
+    this.rebuildVertexHandles();
+  }
+
+  undo(): void {
+    if (!this.editingInstanceId || this.undoStack.length === 0) return;
+    this.redoStack.push(structuredClone(this.currentShapes() ?? []));
+    this.replaceCurrentShapes(this.undoStack.pop()!);
+    this.selectedShapeIndex = null;
+    this.focusedShapeIndex = null;
+    this.rebuildVertexHandles();
+  }
+
+  redo(): void {
+    if (!this.editingInstanceId || this.redoStack.length === 0) return;
+    this.undoStack.push(structuredClone(this.currentShapes() ?? []));
+    this.replaceCurrentShapes(this.redoStack.pop()!);
+    this.selectedShapeIndex = null;
+    this.focusedShapeIndex = null;
+    this.rebuildVertexHandles();
+  }
+
+  /** Snapshots the current edit target's shape array onto the undo stack (capped so it can't grow unbounded across a long editing session) and invalidates redo — call BEFORE a mutation, never after. */
+  private pushUndoSnapshot(): void {
+    if (!this.editingInstanceId) return;
+    this.undoStack.push(structuredClone(this.currentShapes() ?? []));
+    if (this.undoStack.length > UNDO_HISTORY_LIMIT) this.undoStack.shift();
+    this.redoStack = [];
+  }
+
+  /** The current edit target's shape array — the one place every mutation method goes through instead of reading instanceCollisionShapes directly. */
+  private currentShapes(): Point[][] | undefined {
+    return this.editingInstanceId ? this.instanceCollisionShapes.get(this.editingInstanceId) : undefined;
+  }
+
+  /** Replaces the current edit target's whole shape array (undo/redo's own path — every other mutation edits the array returned by currentShapes() in place). */
+  private replaceCurrentShapes(shapes: Point[][]): void {
+    if (this.editingInstanceId) this.instanceCollisionShapes.set(this.editingInstanceId, shapes);
+  }
+
+  /** The real placed item's own transform — collision-edit math places every shape relative to this. */
+  private editBasis(): FootprintItem {
+    const item = this.editingInstanceId ? this.items.get(this.editingInstanceId) : undefined;
+    return item ? { x: item.x, y: item.y, rotation: item.rotation, scale: item.scale } : { x: 0, y: 0, rotation: 0, scale: 1 };
+  }
+
+  /**
+   * The local (fraction-of-baseWidth) shape polygons that currently determine
+   * `item`'s real collision: its own saved override if it has one, else its
+   * kind's shared authored shape, else the legacy auto-guessed footprint
+   * (computeFootprintObb) converted into item's own local frame via the exact
+   * inverse transform. Used to seed a fresh instance-edit session so what's
+   * shown/edited always starts as exactly what's colliding right now — never
+   * a blank canvas for a piece that already collides via inheritance.
+   */
+  private currentEffectiveLocalShapes(item: PlacedItem): Point[][] {
+    const override = this.instanceCollisionShapes.get(item.id);
+    if (override && override.length > 0) return structuredClone(override);
+    const canonical = canonicalKind(item.kind);
+    const authored = this.collisionShapes[canonical];
+    if (authored && authored.length > 0) return structuredClone(authored);
+    const obb = computeFootprintObb(item);
+    const bw = baseDisplayWidth(item.kind);
+    const basis: FootprintItem = { x: item.x, y: item.y, rotation: item.rotation, scale: item.scale };
+    const localPoints = obbToPolygon(obb.cx, obb.cy, obb.halfW, obb.halfH, obb.angleDeg).map((p) => worldPointToLocal(p, basis, bw));
+    return [localPoints];
+  }
+
+  /**
+   * Selects shape `index` (or clears selection for null) — click a shape to
+   * select it, so it's obvious which one Delete Selected Shape / Delete
+   * Backspace will remove (see redrawShapes' highlight). A second click on
+   * the same shape within DOUBLE_CLICK_MS toggles it "focused": every other
+   * shape dims and hides its vertex handles (see rebuildVertexHandles/
+   * redrawShapes), making one shape easy to isolate on cluttered furniture.
+   */
+  private selectShape(index: number | null): void {
+    const now = performance.now();
+    if (index !== null && index === this.lastClickShapeIndex && now - this.lastClickTime < DOUBLE_CLICK_MS) {
+      this.focusedShapeIndex = this.focusedShapeIndex === index ? null : index;
+    }
+    this.lastClickShapeIndex = index;
+    this.lastClickTime = now;
+    this.selectedShapeIndex = index;
+    if (index === null) this.focusedShapeIndex = null;
+    this.rebuildVertexHandles();
+  }
+
+  /**
+   * Converts world floor-space points to the editing kind's stored local
+   * fraction-of-baseWidth points (see CollisionShapeMap's doc comment),
+   * pushes an undo snapshot, and appends them as a new shape — unless the
+   * points are degenerate (near-zero area, e.g. a barely-dragged rectangle
+   * or a straight-line polygon), which is silently dropped rather than
+   * saved as an invisible sliver shape.
+   */
+  private addShape(worldPoints: readonly Point[]): void {
+    if (!this.editingInstanceId || polygonArea(worldPoints) < MIN_SHAPE_AREA_PX2) return;
+    this.pushUndoSnapshot();
+    const bw = baseDisplayWidth(this.editingKind!);
+    const basis = this.editBasis();
+    const local = worldPoints.map((p) => worldPointToLocal(p, basis, bw));
+    let shapes = this.currentShapes();
+    if (!shapes) {
+      shapes = [];
+      this.replaceCurrentShapes(shapes);
+    }
+    shapes.push(local);
+    this.selectedShapeIndex = shapes.length - 1;
+    this.setToolInternal("select");
+    this.rebuildVertexHandles();
+  }
+
+  /** Translates every point of one shape by a world-space delta, converted through the edit target's own rotation/scale basis (identity for a kind's unrotated/scale-1 preview, the real transform for an instance) — the whole-shape drag path from handlePointerMove. */
+  private moveShapeBy(shapeIndex: number, dxWorld: number, dyWorld: number): void {
+    const shape = this.currentShapes()?.[shapeIndex];
+    if (!shape) return;
+    const bw = baseDisplayWidth(this.editingKind!);
+    const basis = this.editBasis();
+    const rad = (basis.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const scale = bw * basis.scale;
+    // Same rotation-inverse as worldPointToLocal, but for a delta vector (no basis position to subtract).
+    const dx = (dxWorld * cos + dyWorld * sin) / scale;
+    const dy = (-dxWorld * sin + dyWorld * cos) / scale;
+    for (const p of shape) {
+      p.x += dx;
+      p.y += dy;
+    }
+  }
+
+  /** The edit target's local (fraction-of-baseWidth) shape points, transformed to world floor-space through the real placed item's current basis (see editBasis) — the same transform computeItemFootprintPolygons applies everywhere else. */
+  private shapeWorldPoints(shape: readonly Point[]): Point[] {
+    const bw = baseDisplayWidth(this.editingKind!);
+    return computeItemFootprintPolygons(this.editBasis(), [shape as Point[]], bw)[0];
+  }
+
+  /**
+   * Destroys and recreates every vertex-handle circle from the current shape
+   * data, then redraws the shape outlines and fires onCollisionShapesChange —
+   * the one place both happen together, so every mutation path just calls
+   * this instead of remembering to notify separately. Called after any
+   * shape-data mutation that isn't itself a live Phaser drag on a handle
+   * (which repositions its own handle directly — see handleDrag — to avoid
+   * destroying the object mid-drag). Large, generously-hit-tested circles
+   * (VERTEX_RADIUS_PX drawn, VERTEX_HIT_RADIUS_PX grabbable) so a vertex is
+   * easy to grab without precision aiming. A focused shape (see selectShape)
+   * hides every other shape's handles to cut clutter.
+   */
+  private rebuildVertexHandles(): void {
+    this.destroyVertexHandles();
+    if (this.editingInstanceId) {
+      for (const [shapeIndex, shape] of (this.currentShapes() ?? []).entries()) {
+        if (this.focusedShapeIndex !== null && this.focusedShapeIndex !== shapeIndex) continue;
+        const color = shapeIndex === this.selectedShapeIndex ? 0xffffff : 0xffe9a8;
+        for (const [pointIndex, worldPt] of this.shapeWorldPoints(shape).entries()) {
+          const screenPt = project(worldPt.x, worldPt.y);
+          const handle = this.scene.add.circle(screenPt.x, screenPt.y, VERTEX_RADIUS_PX, color).setStrokeStyle(2, 0x1e1730).setDepth(4100);
+          handle.setInteractive(new Phaser.Geom.Circle(0, 0, VERTEX_HIT_RADIUS_PX), Phaser.Geom.Circle.Contains);
+          this.scene.input.setDraggable(handle);
+          handle.input!.cursor = "grab";
+          handle.setData("vertex", { shapeIndex, pointIndex });
+          this.vertexHandles.push(handle);
+        }
+      }
+    }
+    this.redrawShapes();
+    this.notifyCollisionShapesChange();
+  }
+
+  private destroyVertexHandles(): void {
+    for (const handle of this.vertexHandles) handle.destroy();
+    this.vertexHandles = [];
+  }
+
+  /** Redraws committed shapes for the editing kind plus whatever's mid-draw (a growing polygon outline, or a live rectangle-drag preview). The selected shape gets a brighter, thicker outline; every shape but the focused one (if any) is dimmed. A light fill keeps the furniture underneath clearly visible. Doesn't touch vertex handles — see rebuildVertexHandles. */
+  private redrawShapes(): void {
+    if (!this.shapesGraphics || !this.editingInstanceId) return;
+    const g = this.shapesGraphics;
+    g.clear();
+
+    const shapes = this.currentShapes() ?? [];
+    shapes.forEach((shape, index) => {
+      const isSelected = index === this.selectedShapeIndex;
+      const isDimmed = this.focusedShapeIndex !== null && this.focusedShapeIndex !== index;
+      const color = isSelected ? 0xffffff : 0x8fd0ff;
+      g.lineStyle(isSelected ? 3 : 2, color, isDimmed ? 0.3 : 1);
+      g.fillStyle(color, isDimmed ? 0.06 : isSelected ? 0.32 : 0.16);
+      this.strokeScreenPolygon(g, this.shapeWorldPoints(shape).map((p) => project(p.x, p.y)));
+    });
+
+    if (this.drawingPoints && this.drawingPoints.length > 0) {
+      g.lineStyle(2, 0xffe9a8, 1);
+      const screenPts = [...this.drawingPoints, this.lastPointerFloor].map((p) => project(p.x, p.y));
+      g.beginPath();
+      g.moveTo(screenPts[0].x, screenPts[0].y);
+      for (let i = 1; i < screenPts.length; i++) g.lineTo(screenPts[i].x, screenPts[i].y);
+      g.strokePath();
+    }
+
+    if (this.rectDragStart) {
+      const s = this.rectDragStart;
+      const e = this.lastPointerFloor;
+      const corners: Point[] = [
+        { x: s.x, y: s.y },
+        { x: e.x, y: s.y },
+        { x: e.x, y: e.y },
+        { x: s.x, y: e.y },
+      ];
+      g.lineStyle(2, 0xffe9a8, 1);
+      g.fillStyle(0xffe9a8, 0.12);
+      this.strokeScreenPolygon(g, corners.map((p) => project(p.x, p.y)));
+    }
+  }
+
+  private strokeScreenPolygon(g: Phaser.GameObjects.Graphics, screenPoints: readonly Point[]): void {
+    if (screenPoints.length < 2) return;
+    g.beginPath();
+    g.moveTo(screenPoints[0].x, screenPoints[0].y);
+    for (let i = 1; i < screenPoints.length; i++) g.lineTo(screenPoints[i].x, screenPoints[i].y);
+    g.closePath();
+    g.fillPath();
+    g.strokePath();
+  }
+
+  /** Fires onCollisionShapesChange with the edited item's current shape count, selection, and undo/redo availability, so the panel can reflect them (enabling/disabling its buttons). */
+  private notifyCollisionShapesChange(): void {
+    if (!this.onCollisionShapesChange || !this.editingInstanceId) return;
+    this.onCollisionShapesChange({
+      itemId: this.editingInstanceId,
+      kind: this.editingKind ?? "",
+      shapeCount: (this.currentShapes() ?? []).length,
+      hasSelection: this.selectedShapeIndex !== null,
+      canUndo: this.undoStack.length > 0,
+      canRedo: this.redoStack.length > 0,
+    });
   }
 }

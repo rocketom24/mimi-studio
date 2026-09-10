@@ -6,6 +6,7 @@ import type { Facing, PlayerState } from "@/game/types/player";
 import { advancePhase, approach, approachAngle, keyframeBlend } from "@/game/entities/walkCycle";
 import { visualDepth } from "@/game/world/depth";
 import { project, screenToWorldDelta } from "@/game/world/projection";
+import { resolveFurnitureCollision, type Point } from "@/game/world/collisionShapes";
 
 const SHEET1_KEY = "mimi-sheet1";
 const SHEET2_KEY = "mimi-sheet2";
@@ -108,6 +109,29 @@ const WALK_BOB_TIME_SCALE = 3;
 function facingFromDelta(dx: number, dy: number): Facing {
   if (dy !== 0) return dy < 0 ? "up" : "down";
   return dx < 0 ? "left" : "right";
+}
+
+/**
+ * Applies resolveFurnitureCollision's result to the body: any position
+ * correction it computed (de-penetration, see collisionShapes.ts) gets
+ * translated straight onto body.x/y (Arcade's postUpdate() propagates that to
+ * the visible sprite from prevFrame/position deltas, same as a normal physics
+ * move), then the resolved velocity is set as usual.
+ */
+function resolveFurnitureCollisions(body: Phaser.Physics.Arcade.Body, vx: number, vy: number, dt: number, polygons: readonly Point[][]): void {
+  const cx = body.center.x;
+  const cy = body.center.y;
+  const resolved = resolveFurnitureCollision(cx, cy, body.halfWidth, body.halfHeight, vx, vy, dt, polygons);
+
+  const dx = resolved.x - cx;
+  const dy = resolved.y - cy;
+  if (dx !== 0 || dy !== 0) {
+    body.x += dx;
+    body.y += dy;
+    body.updateCenter();
+  }
+
+  body.setVelocity(resolved.vx, resolved.vy);
 }
 
 /** Loads Mimi's sprite sheets. Call once from the scene's preload(). */
@@ -264,6 +288,7 @@ export class Player {
   private walkIntensity = 0;
   private lastWorldX: number;
   private lastWorldY: number;
+  private moving = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, input?: InputSource) {
     ensureMimiFrames(scene);
@@ -304,7 +329,7 @@ export class Player {
     });
   }
 
-  update(deltaMs: number): void {
+  update(deltaMs: number, collisionPolygons: readonly Point[][] = []): void {
     const dt = deltaMs / 1000;
     const intent = this.input.getIntent();
     let screenDx = 0;
@@ -315,6 +340,7 @@ export class Player {
     if (intent.right) screenDx += 1;
 
     const moving = screenDx !== 0 || screenDy !== 0;
+    this.moving = moving;
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
 
     let targetVx = 0;
@@ -327,7 +353,9 @@ export class Player {
       this.setFacing(facingFromDelta(screenDx, screenDy));
     }
     const rate = moving ? ACCEL_RATE : DECEL_RATE;
-    body.setVelocity(approach(body.velocity.x, targetVx, rate, dt), approach(body.velocity.y, targetVy, rate, dt));
+    const approachedVx = approach(body.velocity.x, targetVx, rate, dt);
+    const approachedVy = approach(body.velocity.y, targetVy, rate, dt);
+    resolveFurnitureCollisions(body, approachedVx, approachedVy, dt, collisionPolygons);
     this.setAnimationState(moving ? "walking" : "idle");
 
     const traveled = Math.hypot(this.sprite.x - this.lastWorldX, this.sprite.y - this.lastWorldY);
@@ -354,6 +382,11 @@ export class Player {
     const sway = Math.sin(this.phase) * SWAY_MAX_PX * this.walkIntensity;
     this.visual.setPosition(projected.x + sway, projected.y + this.bob.offset);
     this.visual.setDepth(visualDepth(this.sprite.x, this.sprite.y));
+  }
+
+  /** True if the player had real movement intent (a direction key/touch held) as of the last update() — used by the camera to know when to resume following after a manual pan. */
+  get isMoving(): boolean {
+    return this.moving;
   }
 
   /** Logical world X — the physics-authoritative position, unprojected. Use for interaction checks and room lookups. */

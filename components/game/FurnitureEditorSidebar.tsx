@@ -17,7 +17,7 @@ interface FurnitureEditorSidebarProps {
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
-/** Dev-only sidebar for Furniture Editor Mode: click a piece to arm it (then click in the house), or drag a piece straight into the house. */
+/** Dev-only sidebar for placing/moving/resizing furniture. Click a piece to arm it (then click in the house), or drag it straight into the house. Drag to move, R to rotate, scroll or slider to resize, Delete to remove. Collision editing is its own separate tool now — see CollisionEditorPanel.tsx. */
 export default function FurnitureEditorSidebar({
   furnitureAssetFiles,
   onPickKind,
@@ -39,7 +39,7 @@ export default function FurnitureEditorSidebar({
   };
 
   return (
-    <div className="absolute inset-y-0 right-0 z-10 flex w-48 flex-col gap-3 border-l-4 border-[#6f5c9e] bg-[#1e1730] p-3 font-mono text-[#f2ecff] shadow-[-4px_0_0_0_rgba(0,0,0,0.4)]">
+    <div className="relative z-10 flex w-52 shrink-0 flex-col gap-3 border-l-4 border-[#6f5c9e] bg-[#1e1730] p-3 font-mono text-[#f2ecff] shadow-[-4px_0_0_0_rgba(0,0,0,0.4)]">
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-sm font-bold uppercase tracking-wide text-[#ffe9a8]">Furniture Editor</h2>
         <button
@@ -51,6 +51,7 @@ export default function FurnitureEditorSidebar({
           ×
         </button>
       </div>
+
       <p className="text-xs leading-snug text-[#c9bfe6]">
         Drag a piece into the house, or click it then click in the house. Drag to move, R to rotate, scroll or slider to resize, Delete to remove.
       </p>
@@ -93,6 +94,7 @@ export default function FurnitureEditorSidebar({
           </div>
         </div>
       )}
+
       <button
         type="button"
         onClick={handleSave}

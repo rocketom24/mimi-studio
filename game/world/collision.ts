@@ -2,7 +2,6 @@ import * as Phaser from "phaser";
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import { computeWallRects } from "@/game/world/wallSystem";
-import type { FurnitureEditor } from "@/game/world/furnitureEditor";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
 
@@ -22,10 +21,18 @@ function addStaticRect(
 
 /**
  * Builds the static collision geometry for the studio: every wall segment
- * plus solid furniture. Walls are derived from computeWallRects() so they
- * can never drift from what's drawn; furniture pieces opt out via `solid: false`.
+ * plus solid hardcoded room furniture, all axis-aligned (Arcade static
+ * bodies can't be rotated). Walls are derived from computeWallRects() so
+ * they can never drift from what's drawn; furniture pieces opt out via
+ * `solid: false`.
+ *
+ * Editor-placed furniture (game/world/furnitureEditor.ts) is NOT here — it
+ * can be rotated to any angle, which an Arcade static body can't represent
+ * exactly, so it's resolved separately every frame against Mimi's body via
+ * exact oriented-rectangle collision (see obbCollision.ts, wired up in
+ * Player.ts).
  */
-export function createWorldCollision(scene: Phaser.Scene, furnitureEditor: FurnitureEditor): Phaser.Physics.Arcade.StaticGroup {
+export function createWorldCollision(scene: Phaser.Scene): Phaser.Physics.Arcade.StaticGroup {
   const group = scene.physics.add.staticGroup();
 
   for (const rect of computeWallRects()) {
@@ -44,10 +51,6 @@ export function createWorldCollision(scene: Phaser.Scene, furnitureEditor: Furni
         px(piece.h),
       );
     }
-  }
-
-  for (const rect of furnitureEditor.collisionRects()) {
-    addStaticRect(scene, group, rect.x, rect.y, rect.w, rect.h);
   }
 
   return group;
