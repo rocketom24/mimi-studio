@@ -1,8 +1,7 @@
 import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
-import { project, projectedSize } from "@/game/world/projection";
+import { projectedSize } from "@/game/world/projection";
 import { visualDepth } from "@/game/world/depth";
-import type { FootprintPolygon } from "@/game/world/collisionShapes";
 import { ROOMS } from "@/game/world/rooms";
 import { createHouseFloor } from "@/game/world/floorSystem";
 import { createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
@@ -33,6 +32,16 @@ const FILL_FACTOR = 0.8;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 2.5;
 const ZOOM_STEP = 0.1;
+// User-initiated zoom (keys/wheel) eases toward its target every frame in
+// update() rather than via a Phaser Tween — a rapid wheel/trackpad fires many
+// events per second, and restarting a fresh ~200ms Tween on each one (the
+// previous approach) kept interrupting itself, which is what read as laggy/
+// stuttery zoom. Smoothing the CURRENT zoom toward a TARGET every frame
+// decouples the animation from how often wheel events arrive. Closes this
+// fraction of the remaining zoomFactor/target gap per frame.
+const ZOOM_SMOOTHING = 0.18;
+/** Below this gap, snap the last bit instead of asymptotically crawling forever. */
+const ZOOM_SNAP_EPSILON = 0.001;
 // computeCameraBounds pads bounds out to at least the viewport's size so a
 // house smaller than the screen still sits centered — but that means at the
 // default fit zoom there's exactly zero scrollable slack (bounds == viewport
@@ -58,9 +67,8 @@ export class StudioScene extends Phaser.Scene {
   /** Every static level Graphics/Text object built by buildLevel(). */
   private levelObjects: Phaser.GameObjects.GameObject[] = [];
   private zoomFactor = 1;
-  /** "Show Collision" debug overlay — draws every currently-resolved furniture collision polygon over the scene, color-coded hand-drawn vs legacy-fallback (see collisionShapes.ts). Works during normal play, not just Furniture Editor mode, so collision can be checked without also being in edit mode. */
-  private collisionDebugGraphics: Phaser.GameObjects.Graphics | null = null;
-  private collisionDebugVisible = false;
+  /** Where zoomFactor is smoothing toward — see ZOOM_SMOOTHING. Set instantly by adjustZoom; update() eases zoomFactor toward it every frame. */
+  private targetZoomFactor = 1;
   private spaceKey!: Phaser.Input.Keyboard.Key;
   /** True while a Space+left-drag camera pan is in progress — see handlePanPointerDown. */
   private panActive = false;
@@ -97,8 +105,13 @@ export class StudioScene extends Phaser.Scene {
     this.physics.add.collider(this.player.sprite, collisionGroup);
 
     this.applyCameraFraming();
-    this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
-    this.cameras.main.setDeadzone(48, 28);
+    // roundPixels off: nothing here is pixel-art (see gameConfig's pixelArt:
+    // false), so rounding the camera's scroll to whole pixels every frame was
+    // only quantising otherwise-smooth sub-pixel motion into visible 1px
+    // steps. No deadzone either — a dead zone reads as the camera lagging
+    // then snapping to catch up; a plain per-frame lerp tracks continuously
+    // instead, which is what "never jump or lag behind" actually wants.
+    this.cameras.main.startFollow(this.player.visual, false, 0.1, 0.1);
 
     this.input.keyboard?.on("keydown", this.handleZoomKey, this);
     this.input.on("wheel", this.handleWheelZoom, this);
@@ -130,13 +143,9 @@ export class StudioScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    // Collision debug draw runs even while the Furniture Editor is open (and
-    // input is otherwise frozen below) — it's a pure readout of whatever's
-    // currently authored, not something that moves the camera/player, so
-    // there's no reason "Show Collision" should go blank the moment you're
-    // actually drawing a shape.
+    this.updateZoomSmoothing();
+
     const footprints = this.furnitureEditor.footprintPolygons();
-    if (this.collisionDebugVisible) this.drawCollisionDebug(footprints);
 
     if (this.inputLocked || this.furnitureEditingActive) return;
 
@@ -163,37 +172,11 @@ export class StudioScene extends Phaser.Scene {
     if (this.followSuspended && this.player.isMoving) {
       this.followSuspended = false;
       this.applyCameraFraming();
-      this.cameras.main.startFollow(this.player.visual, true, 0.1, 0.1);
+      this.cameras.main.startFollow(this.player.visual, false, 0.1, 0.1);
     }
     this.interactionSystem.update(this.player.worldX, this.player.worldY);
     this.interactionPrompt.update();
     updateDoors(this, this.doorSegments, this.player.worldX, this.player.worldY);
-  }
-
-  /** Toggled by GameCanvas's "Show Collision" button. */
-  setCollisionDebugVisible(visible: boolean): void {
-    this.collisionDebugVisible = visible;
-    if (!visible) this.collisionDebugGraphics?.clear();
-  }
-
-  /** Draws every resolved collision polygon over the scene: cyan for a hand-drawn shape, amber for a kind still on the legacy auto-guessed fallback (see collisionShapes.ts) — a quick visual check for "have I drawn this piece yet" and "does Mimi's walkway actually look right". */
-  private drawCollisionDebug(footprints: readonly FootprintPolygon[]): void {
-    if (!this.collisionDebugGraphics) this.collisionDebugGraphics = this.add.graphics().setDepth(5000);
-    const g = this.collisionDebugGraphics;
-    g.clear();
-    for (const { points, authored } of footprints) {
-      if (points.length < 2) continue;
-      const color = authored ? 0x4dd9ff : 0xffb84d;
-      g.lineStyle(2, color, 0.9);
-      g.fillStyle(color, 0.25);
-      const screenPoints = points.map((p) => project(p.x, p.y));
-      g.beginPath();
-      g.moveTo(screenPoints[0].x, screenPoints[0].y);
-      for (let i = 1; i < screenPoints.length; i++) g.lineTo(screenPoints[i].x, screenPoints[i].y);
-      g.closePath();
-      g.fillPath();
-      g.strokePath();
-    }
   }
 
   /** Called by React when a portfolio panel is closed via its own close button (not ESC). */
@@ -242,11 +225,24 @@ export class StudioScene extends Phaser.Scene {
     }
   }
 
-  /** Recomputes camera bounds from the active projection's extent and reapplies zoom, so toggling mode, zooming, or resizing the window never crops the house. */
+  /**
+   * Recomputes camera bounds from the active projection's extent and
+   * reapplies zoom (from the CURRENT, already-smoothed zoomFactor — see
+   * updateZoomSmoothing), so toggling mode, zooming, or resizing the window
+   * never crops the house.
+   */
   private applyCameraFraming(): void {
     const bounds = this.computeCameraBounds();
     this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
     this.cameras.main.setZoom(this.computeFitZoom() * this.zoomFactor);
+  }
+
+  /** Eases zoomFactor toward targetZoomFactor every frame — see ZOOM_SMOOTHING's doc comment for why this replaced a per-wheel-event Tween. */
+  private updateZoomSmoothing(): void {
+    const gap = this.targetZoomFactor - this.zoomFactor;
+    if (gap === 0) return;
+    this.zoomFactor = Math.abs(gap) < ZOOM_SNAP_EPSILON ? this.targetZoomFactor : Phaser.Math.Linear(this.zoomFactor, this.targetZoomFactor, ZOOM_SMOOTHING);
+    this.applyCameraFraming();
   }
 
   /** Called by Phaser's ScaleManager whenever the canvas is resized (window resize, container resize) — the game size is no longer a fixed constant, so every viewport-dependent calc has to redo itself here instead of once at create(). */
@@ -288,11 +284,12 @@ export class StudioScene extends Phaser.Scene {
     this.adjustZoom(deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP);
   }
 
+  /** Only moves the target — update()'s updateZoomSmoothing() eases the actual camera toward it every frame, so rapid-fire wheel/key events (trackpad scroll can send dozens a second) never restart or fight an in-flight animation. */
   private adjustZoom(delta: number): void {
-    this.zoomFactor = Phaser.Math.Clamp(this.zoomFactor + delta, ZOOM_MIN, ZOOM_MAX);
-    this.applyCameraFraming();
+    this.targetZoomFactor = Phaser.Math.Clamp(this.targetZoomFactor + delta, ZOOM_MIN, ZOOM_MAX);
     (window as unknown as { __CAM_DEBUG__?: unknown }).__CAM_DEBUG__ = {
       zoomFactor: this.zoomFactor,
+      targetZoomFactor: this.targetZoomFactor,
       cameraZoom: this.cameras.main.zoom,
       scrollX: this.cameras.main.scrollX,
       scrollY: this.cameras.main.scrollY,

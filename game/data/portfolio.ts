@@ -5,7 +5,9 @@ export type PortfolioSectionId =
   | "skills"
   | "education"
   | "contact"
-  | "cv";
+  | "cv"
+  | "techStack"
+  | "currentlyLearning";
 
 export interface PortfolioSection {
   readonly title: string;
@@ -37,11 +39,19 @@ export const PORTFOLIO_SECTIONS: Record<PortfolioSectionId, PortfolioSection> = 
     body: [PLACEHOLDER],
   },
   contact: {
-    title: "Contact",
+    title: "Contact Mimi",
     body: [PLACEHOLDER],
   },
   cv: {
     title: "Quick CV",
+    body: [PLACEHOLDER],
+  },
+  techStack: {
+    title: "Tech Stack",
+    body: [PLACEHOLDER],
+  },
+  currentlyLearning: {
+    title: "Currently Learning",
     body: [PLACEHOLDER],
   },
 };

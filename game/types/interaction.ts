@@ -6,7 +6,6 @@ export interface Interactable {
   readonly x: number;
   readonly y: number;
   readonly radius: number;
-  readonly prompt: string;
   readonly panelId: PortfolioSectionId;
 }
 

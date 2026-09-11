@@ -2,68 +2,60 @@ import * as Phaser from "phaser";
 import { TILE_SIZE } from "@/game/config/world";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import type { InputSource } from "@/game/types/input";
-import type { Facing, PlayerState } from "@/game/types/player";
+import { FACINGS, type Facing, type PlayerState } from "@/game/types/player";
 import { advancePhase, approach, approachAngle, keyframeBlend } from "@/game/entities/walkCycle";
 import { visualDepth } from "@/game/world/depth";
 import { project, screenToWorldDelta } from "@/game/world/projection";
 import { resolveFurnitureCollision, type Point } from "@/game/world/collisionShapes";
-
-const SHEET1_KEY = "mimi-sheet1";
-const SHEET2_KEY = "mimi-sheet2";
-const SHEET1_PATH = "/assets/game/character/mimi-sheet-1.png";
-const SHEET2_PATH = "/assets/game/character/mimi-sheet-2.png";
-
-const UP_LEFT_SWING_KEY = "mimi-up-left-swing";
-const UP_RIGHT_SWING_KEY = "mimi-up-right-swing";
-const LEFT_STRIDE_FWD_KEY = "mimi-left-stride-fwd";
-const LEFT_STRIDE_BACK_KEY = "mimi-left-stride-back";
+import { ATLAS_ROW, MIMI_WALK_ATLAS, POSE, type AtlasDirection } from "@/game/entities/mimiWalkAtlas";
 
 /**
- * Frame rects below were located automatically (alpha-bounding-box scan of
- * both source sheets via a one-off script), not hand-cropped. Sheet 1 is a
- * loosely-captioned pose sheet whose text labels turned out unreliable on
- * inspection; the frames actually used were picked by eye from the real
- * poses. It turns out to contain two distinct real front-facing stride
- * poses (opposite leg/arm swing) - down's walk cycle uses both, no
- * synthetic mirroring needed. Sheet 2 is a rotation turntable (front ->
- * left-profile -> back), and every angle - checked across all 3 rows - is
- * the exact same standing pose with zero leg variation, so up/left have no
- * real stride art at all. Their walk cycles instead reuse the idle pose's
- * own real foot/leg pixels, cut out and rigidly translated (no skew/warp)
- * to a shifted position on a canvas texture - the same category of
- * operation as a mirrored flip, just a reposition instead. "right" has no
- * native art and mirrors "left" via flipX.
+ * Mimi's walk art is a generated, uniform-grid atlas — see
+ * scripts/build-mimi-walk-atlas.mjs for how it is derived from the two raw
+ * pose sheets. Two properties of that atlas are what this file relies on:
+ *
+ *  - every frame is the same size, so swapping frames can never move the
+ *    sprite's display origin, and
+ *  - every figure is positioned so its ground anchor (the point midway between
+ *    the feet, on the floor line) sits at the same pixel in every cell.
+ *
+ * Together those mean pose changes cannot introduce any positional jitter, and
+ * no per-frame origin bookkeeping is needed here at all.
+ *
+ * Only five of the eight directions are drawn. The three missing ones are the
+ * horizontal mirror of a drawn one (w of e, sw of se, ne of nw) and are
+ * produced with flipX — which stays aligned precisely because the anchor is
+ * the horizontal centre of the cell, so a flip maps it onto itself.
  */
-const DOWN_IDLE = { key: SHEET1_KEY, frame: "down-idle", x: 292, y: 24, width: 90, height: 225 };
-const DOWN_STRIDE = { key: SHEET1_KEY, frame: "down-stride", x: 957, y: 24, width: 78, height: 232 };
-const DOWN_STRIDE_B = { key: SHEET1_KEY, frame: "down-stride-b", x: 61, y: 290, width: 106, height: 217 };
-const UP = { key: SHEET2_KEY, frame: "up", x: 1229, y: 261, width: 95, height: 231 };
-const LEFT = { key: SHEET2_KEY, frame: "left", x: 174, y: 262, width: 70, height: 234 };
+const MIRRORED: ReadonlySet<Facing> = new Set<Facing>(["w", "sw", "ne"]);
+const ATLAS_DIRECTION: Record<Facing, AtlasDirection> = {
+  e: "e",
+  se: "se",
+  s: "s",
+  sw: "se",
+  w: "e",
+  nw: "nw",
+  n: "n",
+  ne: "nw",
+};
 
-// Real-pixel piece cut from the idle frame's own art for the rigid-shift
-// walk trick (see comment above). Rects are local to their owning frame.
-const UP_LEFT_FOOT_PIECE = { sx: 0, sy: 148, sw: 51, sh: 83, dx: 6, dy: -13 };
-const UP_RIGHT_FOOT_PIECE = { sx: 50, sy: 148, sw: 45, sh: 83, dx: -6, dy: -13 };
-const LEFT_LEG_PIECE_FWD = { sx: 5, sy: 154, sw: 45, sh: 80, dx: -19, dy: -9 };
-const LEFT_LEG_PIECE_BACK = { sx: 5, sy: 154, sw: 45, sh: 80, dx: 15, dy: 5 };
-
-// Content bbox height varies per pose (~217-234px) since a mid-stride pose
-// is naturally a bit shorter/taller than standing idle - expected, not a
-// bug. Scale is pinned to a fixed reference (down-idle's original 232px
-// height) rather than derived from whichever frame is current, so overall
-// character scale never drifts as poses change.
-const SCALE_REFERENCE_HEIGHT = 232;
 export const PLAYER_HEIGHT = 32;
+
+/**
+ * Mimi's rendered standing height in screen px, carried over exactly from the
+ * previous art so this change cannot resize her: that sheet's idle frame held
+ * 225px of content and was drawn at 32/232, i.e. 31.03px tall on screen. The
+ * sprite scale below is whatever makes the new atlas's standing pose match it.
+ */
+const RENDERED_STANDING_HEIGHT = 225 * (PLAYER_HEIGHT / 232);
 
 // Mimi's collision body is her FLOOR FOOTPRINT, in world px - a small square
 // centred on her feet. World x/y is floor space in this dimetric projection
 // (see projection.ts), so a sprite measurement taken in screen pixels means
-// nothing here: sizing the body off the down-idle crop (as this used to,
-// 108x232 source px scaled by 0.138) gave her a 13x21 world-px floor
-// footprint - 0.8 x 1.3 tiles, over a tile deep - whose centre sat ~10px
-// NORTH of where she was actually standing. That single offset is what let
-// her walk into the front of every piece of furniture while a phantom strip
-// behind each one blocked open floor.
+// nothing here: sizing the body off a sprite crop gives a footprint over a
+// tile deep whose centre sits well north of where she is actually standing,
+// which is what used to let her walk into the front of every piece of
+// furniture while a phantom strip behind each one blocked open floor.
 //
 // 10px is ~0.6 tile, comfortably narrower than the 2-tile (32px) doorways
 // and close to how wide she reads on the floor.
@@ -84,31 +76,97 @@ const PLAYER_SPEED = 65; // logical px/sec
 const ACCEL_RATE = 22;
 const DECEL_RATE = 28;
 
-// One full 4-keyframe gait cycle (idle -> stride A -> idle -> stride B) plays
-// out over this much actual world-space travel, tying the animation directly
-// to how far Mimi has really moved instead of a fixed timer - the same
-// distance covers the same cycle at any speed, so there's no sliding.
-const STRIDE_LENGTH_PX = 34;
+/**
+ * One full 4-keyframe gait cycle (neutral -> contact A -> neutral -> contact B)
+ * plays out over this much travel, measured in WORLD px — the floor she
+ * actually crosses, not the screen distance that floor projects to.
+ *
+ * This distinction decides how the gait reads. The dimetric projection is
+ * anisotropic: screenY is scaled by ISO_Y_SCALE, half of ISO_X_SCALE, so
+ * walking "screen up" covers world ground at exactly the same rate as walking
+ * "screen right" while advancing only ~0.5x as far in screen pixels. Clocking
+ * the cycle off the projected position therefore halved her step rate whenever
+ * she walked up or down the screen — she kept her real speed but her legs
+ * moved in slow motion, and the gait visibly changed every time she turned.
+ * Cadence is a property of how fast someone is walking, not of where the
+ * camera is; the eye reads a cadence change far more strongly than it reads
+ * imperfect foot planting. So: world distance.
+ *
+ * The two measures coincide for due east/west (the projected length of a
+ * screen-horizontal unit move is ~0.99), which is why that axis looked right
+ * under either rule and is unaffected by this value's meaning changing.
+ *
+ * On the number: the contact poses put her feet ~9px apart on screen, so
+ * literal slip-free contact would want ~18. At the unchanged PLAYER_SPEED that
+ * is ~7 steps/sec — frantic scurrying, not a cozy walk; she simply covers a lot
+ * of ground for how tall she is. 30 holds ~4.3 steps/sec, the same ballpark as
+ * the genre's 4-frames-at-8fps convention. Lower toward 18 for foot-accurate
+ * contact, raise for a more ambling gait.
+ */
+const STRIDE_LENGTH_PX = 30;
 
-// When movement stops mid-stride, phase eases toward whichever neutral idle
-// anchor (phase 0 or PI - both keyframe sets place idle at both) is nearer,
-// instead of freezing mid-step or popping back instantly.
+// When movement stops mid-stride, phase eases toward whichever neutral anchor
+// (phase 0 or PI - both are the feet-together pose) is nearer, instead of
+// freezing mid-step or popping back instantly.
 const IDLE_SETTLE_RATE = 7;
 
-// 0..1 envelope that eases in when walking starts and back out when it stops,
-// scaling the lean/weight-shift below so they fade in/out with the stride
-// instead of snapping on and off with animationState.
+// Below this much travel in a frame she counts as not actually going anywhere,
+// and the gait settles to neutral rather than holding whatever pose it was mid-
+// way through. Without it, walking into furniture and keeping the key held left
+// her frozen on a half-raised leg — intent was still "walking", so the cycle
+// never settled, but she had no ground left to cover to advance it either.
+// Sliding along a wall still covers real distance and still animates.
+const BLOCKED_TRAVEL_EPSILON = 0.01;
+
+/**
+ * Facing is held as a continuous angle that chases the input direction, and is
+ * only quantised to one of the eight sprites at draw time. A hard reversal
+ * therefore sweeps through the intervening directions over ~150ms and reads as
+ * Mimi turning around, instead of the sprite popping to its opposite. It also
+ * absorbs the one-frame flicker you would otherwise get from releasing the two
+ * keys of a diagonal a frame apart.
+ */
+const TURN_RATE = 16;
+
+// 0..1 envelope that eases in when walking starts and back out when it stops.
+// Used to fade the idle breathing bob out while she walks — the walk art
+// carries its own weight shift, and layering an extra vertical offset on top
+// would lift her planted foot off the floor.
 const WALK_INTENSITY_RATE = 9;
-const LEAN_MAX_RAD = Phaser.Math.DegToRad(3);
-const SWAY_MAX_PX = 1.2;
+const IDLE_BOB_PX = 1;
 
-const IDLE_BOB_TIME_SCALE = 1;
-const WALK_BOB_TIME_SCALE = 3;
+/** Screen-space angle (radians) of a facing, matching FACINGS' clockwise-from-east order. */
+const SECTOR_RADIANS = (Math.PI * 2) / FACINGS.length;
 
-/** Diagonal movement reports vertical facing (deterministic tie-break). */
-function facingFromDelta(dx: number, dy: number): Facing {
-  if (dy !== 0) return dy < 0 ? "up" : "down";
-  return dx < 0 ? "left" : "right";
+/** Quantises a continuous screen-space angle to the nearest of the eight facings. */
+function facingFromAngle(angle: number): Facing {
+  const index = Math.round(angle / SECTOR_RADIANS);
+  return FACINGS[((index % FACINGS.length) + FACINGS.length) % FACINGS.length];
+}
+
+/**
+ * Each direction's cycle as 4 keyframes spaced evenly around one gait phase
+ * (0, PI/2, PI, 3PI/2): neutral -> contact A -> neutral -> contact B. Neutral
+ * appears twice because a real gait passes through a feet-together moment once
+ * per step, not once per stride; alternating the two contacts directly reads as
+ * a stiff shuffle.
+ *
+ * Frames are hard-cut, never crossfaded — alpha-blending two poses with
+ * different limb positions reads as the whole sprite pulsing, whereas an
+ * instant swap reads as a normal animation frame. What removes the "sliding
+ * PNG" feel is that the keyframe is picked from real distance-locked phase
+ * (see update), not from a timer.
+ */
+const CYCLE: readonly (typeof POSE)[keyof typeof POSE][] = [
+  POSE.neutral,
+  POSE.contactA,
+  POSE.neutral,
+  POSE.contactB,
+];
+
+/** Atlas frame index for a facing at a given slot in the cycle. */
+function frameIndex(facing: Facing, cycleSlot: number): number {
+  return ATLAS_ROW[ATLAS_DIRECTION[facing]] * MIMI_WALK_ATLAS.columns + CYCLE[cycleSlot];
 }
 
 /**
@@ -134,135 +192,16 @@ function resolveFurnitureCollisions(body: Phaser.Physics.Arcade.Body, vx: number
   body.setVelocity(resolved.vx, resolved.vy);
 }
 
-/** Loads Mimi's sprite sheets. Call once from the scene's preload(). */
+/** Loads Mimi's walk atlas. Call once from the scene's preload(). */
 export function preloadPlayerSprite(scene: Phaser.Scene): void {
-  scene.load.image(SHEET1_KEY, SHEET1_PATH);
-  scene.load.image(SHEET2_KEY, SHEET2_PATH);
+  scene.load.spritesheet(MIMI_WALK_ATLAS.key, MIMI_WALK_ATLAS.path, {
+    frameWidth: MIMI_WALK_ATLAS.frameWidth,
+    frameHeight: MIMI_WALK_ATLAS.frameHeight,
+  });
 }
-
-/**
- * Builds a canvas texture that is the given base frame with one real-pixel
- * piece of its own art cut out and redrawn at a shifted position (rigid
- * translation only - no scale/skew/rotation applied to the piece). Used to
- * fake a leg mid-step from art that only has a single standing pose.
- */
-function buildShiftedFrameTexture(
-  scene: Phaser.Scene,
-  key: string,
-  base: { key: string; x: number; y: number; width: number; height: number },
-  piece: { sx: number; sy: number; sw: number; sh: number; dx: number; dy: number },
-): void {
-  if (scene.textures.exists(key)) return;
-  const source = scene.textures.get(base.key).getSourceImage() as HTMLImageElement;
-  const canvasTexture = scene.textures.createCanvas(key, base.width, base.height);
-  if (!canvasTexture) return;
-  const ctx = canvasTexture.context;
-  ctx.drawImage(source, base.x, base.y, base.width, base.height, 0, 0, base.width, base.height);
-
-  // No clearRect at the piece's original spot: erasing it left a transparent
-  // notch wherever the shift didn't fully cover that area (e.g. a vertical
-  // lift exposes a sliver at the old foot's bottom edge), reading as a leg
-  // detached from the body. Leaving the untouched base pixels there and
-  // drawing the shifted piece on top keeps the limb visually continuous.
-  //
-  // A plain opaque paste still reads as a floating rectangle though - its
-  // straight-cut edges don't follow the leg's taper, so a corner pokes out
-  // past the real silhouette wherever the piece is wider than the limb at
-  // that point. Feathering the piece's own alpha (blurred inset mask) before
-  // pasting fades those edges into the untouched base instead of cutting a
-  // hard seam.
-  const feather = Math.round(Math.min(piece.sw, piece.sh) * 0.25);
-  const pieceCanvas = document.createElement("canvas");
-  pieceCanvas.width = piece.sw;
-  pieceCanvas.height = piece.sh;
-  const pieceCtx = pieceCanvas.getContext("2d")!;
-  pieceCtx.drawImage(source, base.x + piece.sx, base.y + piece.sy, piece.sw, piece.sh, 0, 0, piece.sw, piece.sh);
-  pieceCtx.globalCompositeOperation = "destination-in";
-  pieceCtx.filter = `blur(${feather}px)`;
-  pieceCtx.fillStyle = "#000";
-  pieceCtx.fillRect(feather, feather, piece.sw - feather * 2, piece.sh - feather * 2);
-
-  ctx.drawImage(pieceCanvas, piece.sx + piece.dx, piece.sy + piece.dy);
-  canvasTexture.refresh();
-}
-
-/**
- * Registers Mimi's custom texture frames, the rigid-shift walk frames, and
- * the walk animations, once per scene. Idempotent (guarded by existence
- * checks) so multiple Player instances / scene restarts are safe.
- */
-function ensureMimiFrames(scene: Phaser.Scene): void {
-  const sheet1 = scene.textures.get(SHEET1_KEY);
-  const sheet2 = scene.textures.get(SHEET2_KEY);
-
-  if (!sheet1.has(DOWN_IDLE.frame)) {
-    sheet1.add(DOWN_IDLE.frame, 0, DOWN_IDLE.x, DOWN_IDLE.y, DOWN_IDLE.width, DOWN_IDLE.height);
-  }
-  if (!sheet1.has(DOWN_STRIDE.frame)) {
-    sheet1.add(DOWN_STRIDE.frame, 0, DOWN_STRIDE.x, DOWN_STRIDE.y, DOWN_STRIDE.width, DOWN_STRIDE.height);
-  }
-  if (!sheet1.has(DOWN_STRIDE_B.frame)) {
-    sheet1.add(DOWN_STRIDE_B.frame, 0, DOWN_STRIDE_B.x, DOWN_STRIDE_B.y, DOWN_STRIDE_B.width, DOWN_STRIDE_B.height);
-  }
-  if (!sheet2.has(UP.frame)) {
-    sheet2.add(UP.frame, 0, UP.x, UP.y, UP.width, UP.height);
-  }
-  if (!sheet2.has(LEFT.frame)) {
-    sheet2.add(LEFT.frame, 0, LEFT.x, LEFT.y, LEFT.width, LEFT.height);
-  }
-
-  buildShiftedFrameTexture(scene, UP_LEFT_SWING_KEY, UP, UP_LEFT_FOOT_PIECE);
-  buildShiftedFrameTexture(scene, UP_RIGHT_SWING_KEY, UP, UP_RIGHT_FOOT_PIECE);
-  buildShiftedFrameTexture(scene, LEFT_STRIDE_FWD_KEY, LEFT, LEFT_LEG_PIECE_FWD);
-  buildShiftedFrameTexture(scene, LEFT_STRIDE_BACK_KEY, LEFT, LEFT_LEG_PIECE_BACK);
-}
-
-interface FrameRef {
-  key: string;
-  frame: string | number;
-}
-
-/**
- * Each direction's walk cycle as 4 keyframes spaced evenly around one gait
- * phase (0, PI/2, PI, 3*PI/2): idle -> contact A -> idle -> contact B. Idle
- * appears twice - a real gait passes through a feet-together moment once per
- * step, not once per stride - so it reads as a false "reset to standing" if
- * only alternating between the two contact poses directly.
- *
- * Player hard-cuts between these (see applyPose) rather than crossfading -
- * alpha-blending idle against a contact pose with a very different arm/leg
- * position made the whole sprite visibly pulse in and out at every
- * transition (a fading double-exposure reads as a flash; an instant swap
- * reads as a normal animation frame, the same way it does in every
- * traditional sprite-sheet walk cycle). What actually fixes the original
- * "static PNG sliding" complaint is picking the keyframe from real
- * distance-locked phase (see Player.update) instead of a fixed timer, not
- * blending between the art.
- */
-const FRAME_SETS: Record<"down" | "up" | "left", readonly [FrameRef, FrameRef, FrameRef, FrameRef]> = {
-  down: [
-    { key: DOWN_IDLE.key, frame: DOWN_IDLE.frame },
-    { key: DOWN_STRIDE.key, frame: DOWN_STRIDE.frame },
-    { key: DOWN_IDLE.key, frame: DOWN_IDLE.frame },
-    { key: DOWN_STRIDE_B.key, frame: DOWN_STRIDE_B.frame },
-  ],
-  up: [
-    { key: UP.key, frame: UP.frame },
-    { key: UP_LEFT_SWING_KEY, frame: "__BASE" },
-    { key: UP.key, frame: UP.frame },
-    { key: UP_RIGHT_SWING_KEY, frame: "__BASE" },
-  ],
-  left: [
-    { key: LEFT.key, frame: LEFT.frame },
-    { key: LEFT_STRIDE_FWD_KEY, frame: "__BASE" },
-    { key: LEFT.key, frame: LEFT.frame },
-    { key: LEFT_STRIDE_BACK_KEY, frame: "__BASE" },
-  ],
-};
 
 /**
  * Mimi, the player character. Owns her sprite, movement, facing, and animation.
- * Collision belongs to a later phase; input source is swappable (keyboard now).
  *
  * `sprite` is the Arcade physics body and stays purely logical — Phaser's
  * Body.preUpdate() resyncs itself FROM the game object's x/y every single
@@ -274,7 +213,7 @@ const FRAME_SETS: Record<"down" | "up" | "left", readonly [FrameRef, FrameRef, F
  */
 export class Player {
   readonly sprite: Phaser.Physics.Arcade.Sprite;
-  /** Container holding the two crossfading pose layers — see applyPose(). The thing the camera follows and the thing actually drawn. */
+  /** The thing the camera follows and the thing actually drawn. */
   readonly visual: Phaser.GameObjects.Sprite;
   private readonly scale: number;
   private state: PlayerState;
@@ -282,26 +221,34 @@ export class Player {
   private readonly bob = { offset: 0 };
   private readonly bobTween: Phaser.Tweens.Tween;
 
-  /** Gait phase in radians, advanced by actual world-space distance moved (see STRIDE_LENGTH_PX) — never by a timer. */
+  /** Gait phase in radians, advanced by actual world distance moved (see STRIDE_LENGTH_PX) — never by a timer. */
   private phase = 0;
-  /** 0..1, eases toward 1 while walking and 0 while idle; scales the lean/sway so they fade rather than snap. */
+  /** Continuous screen-space facing angle; quantised to a sprite only at draw time (see TURN_RATE). */
+  private facingAngle = Math.PI / 2; // south, matching the initial "s" facing
+  /** 0..1, eases toward 1 while walking and 0 while idle; fades the idle bob out. */
   private walkIntensity = 0;
   private lastWorldX: number;
   private lastWorldY: number;
   private moving = false;
+  /** Frame currently shown, so setFrame is only called on a real change. */
+  private currentFrame = -1;
 
   constructor(scene: Phaser.Scene, x: number, y: number, input?: InputSource) {
-    ensureMimiFrames(scene);
-
-    this.state = { facing: "down", animationState: "idle" };
+    this.state = { facing: "s", animationState: "idle" };
     this.input = input ?? new KeyboardInput(scene);
+
     this.lastWorldX = x;
     this.lastWorldY = y;
 
-    this.scale = PLAYER_HEIGHT / SCALE_REFERENCE_HEIGHT;
+    this.scale = RENDERED_STANDING_HEIGHT / MIMI_WALK_ATLAS.referenceStandingHeight;
 
-    this.sprite = scene.physics.add.sprite(x, y, DOWN_IDLE.key, DOWN_IDLE.frame);
-    this.sprite.setOrigin(0.5, 1);
+    // The atlas's ground anchor is the cell's bottom-centre less padBottom, so
+    // that — not the cell's literal bottom edge — is where the origin goes.
+    const originY = (MIMI_WALK_ATLAS.frameHeight - MIMI_WALK_ATLAS.padBottom) / MIMI_WALK_ATLAS.frameHeight;
+    const startFrame = frameIndex("s", 0);
+
+    this.sprite = scene.physics.add.sprite(x, y, MIMI_WALK_ATLAS.key, startFrame);
+    this.sprite.setOrigin(0.5, originY);
     this.sprite.setVisible(false);
     this.sprite.setScale(this.scale);
 
@@ -309,23 +256,24 @@ export class Player {
     // multiplies both by the sprite's scale to get world px (Body.updateBounds
     // / updateFromGameObject). Working back from BODY_FOOTPRINT_PX therefore
     // needs the /scale, and the offset is measured from the frame's display
-    // origin (the feet, origin 0.5/1) so the resulting box lands centred on
-    // them rather than somewhere up the sprite.
+    // origin (the ground anchor) so the resulting box lands centred on her
+    // feet rather than somewhere up the sprite.
     const bodySource = Math.round(BODY_FOOTPRINT_PX / this.scale);
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     body.setSize(bodySource, bodySource, false);
     body.setOffset(this.sprite.displayOriginX - bodySource / 2, this.sprite.displayOriginY - bodySource / 2);
     body.setCollideWorldBounds(true);
 
-    this.visual = scene.add.sprite(x, y, DOWN_IDLE.key, DOWN_IDLE.frame);
-    this.visual.setOrigin(0.5, 1);
+    this.visual = scene.add.sprite(x, y, MIMI_WALK_ATLAS.key, startFrame);
+    this.visual.setOrigin(0.5, originY);
     this.visual.setScale(this.scale);
     this.visual.setDepth(visualDepth(x, y));
+    this.currentFrame = startFrame;
 
     this.bobTween = scene.tweens.add({
       targets: this.bob,
-      offset: -1,
-      duration: 500,
+      offset: -IDLE_BOB_PX,
+      duration: 1400,
       yoyo: true,
       repeat: -1,
       ease: "Sine.easeInOut",
@@ -353,23 +301,29 @@ export class Player {
       const world = screenToWorldDelta(screenDx / length, screenDy / length);
       targetVx = world.x * PLAYER_SPEED;
       targetVy = world.y * PLAYER_SPEED;
-      this.setFacing(facingFromDelta(screenDx, screenDy));
+      // Facing is driven by SCREEN intent, not the world-space velocity: the
+      // sprites are drawn for screen directions, and pressing Right must show
+      // her walking right regardless of how that shears into world space.
+      this.facingAngle = approachAngle(this.facingAngle, Math.atan2(screenDy, screenDx), TURN_RATE, dt);
     }
     const rate = moving ? ACCEL_RATE : DECEL_RATE;
     const approachedVx = approach(body.velocity.x, targetVx, rate, dt);
     const approachedVy = approach(body.velocity.y, targetVy, rate, dt);
     resolveFurnitureCollisions(body, approachedVx, approachedVy, dt, collisionPolygons);
     this.setAnimationState(moving ? "walking" : "idle");
+    this.setFacing(facingFromAngle(this.facingAngle));
 
+    // Phase advances on the world ground she actually crossed — so her cadence
+    // is identical in every direction, and being blocked by furniture stops the
+    // legs rather than letting them run on the spot.
     const traveled = Math.hypot(this.sprite.x - this.lastWorldX, this.sprite.y - this.lastWorldY);
     this.lastWorldX = this.sprite.x;
     this.lastWorldY = this.sprite.y;
-    if (moving && traveled > 0) {
+    if (moving && traveled > BLOCKED_TRAVEL_EPSILON) {
       this.phase = advancePhase(this.phase, traveled, STRIDE_LENGTH_PX);
     } else {
       // Settle toward the nearer of phase 0 or PI (both are the neutral
-      // feet-together pose in every FRAME_SETS entry) instead of freezing
-      // mid-stride when a key is released.
+      // feet-together pose) instead of freezing mid-stride on key release.
       const nearestIdlePhase = Math.round(this.phase / Math.PI) * Math.PI;
       this.phase = approachAngle(this.phase, nearestIdlePhase % (Math.PI * 2), IDLE_SETTLE_RATE, dt);
     }
@@ -382,8 +336,7 @@ export class Player {
   /** Repositions the visual sprite from the physics-authoritative sprite position — no input/movement/physics. */
   reprojectVisual(): void {
     const projected = project(this.sprite.x, this.sprite.y);
-    const sway = Math.sin(this.phase) * SWAY_MAX_PX * this.walkIntensity;
-    this.visual.setPosition(projected.x + sway, projected.y + this.bob.offset);
+    this.visual.setPosition(projected.x, projected.y + this.bob.offset * (1 - this.walkIntensity));
     this.visual.setDepth(visualDepth(this.sprite.x, this.sprite.y));
   }
 
@@ -406,6 +359,7 @@ export class Player {
   stop(): void {
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
     body.setVelocity(0, 0);
+    this.moving = false;
     this.setAnimationState("idle");
   }
 
@@ -417,23 +371,23 @@ export class Player {
   setAnimationState(animationState: PlayerState["animationState"]): void {
     if (this.state.animationState === animationState) return;
     this.state = { ...this.state, animationState };
-    this.bobTween.timeScale = animationState === "walking" ? WALK_BOB_TIME_SCALE : IDLE_BOB_TIME_SCALE;
   }
 
   /**
-   * Picks this frame's keyframe, mirroring, and walking lean/sway from the
-   * current facing + gait phase. Runs every update regardless of
-   * animationState so a stopped stride keeps easing toward neutral (see
-   * IDLE_SETTLE_RATE) instead of freezing on its last frame.
+   * Picks this frame's atlas frame and mirroring from the current facing + gait
+   * phase. Runs every update regardless of animationState so a stopped stride
+   * keeps easing toward neutral (see IDLE_SETTLE_RATE) rather than freezing on
+   * whatever pose it happened to be showing.
    */
   private applyPose(): void {
-    const facingKey = this.state.facing === "right" ? "left" : this.state.facing;
-    const frames = FRAME_SETS[facingKey];
-    const { fromIndex, toIndex, blend } = keyframeBlend(this.phase, frames.length);
-    const nearest = frames[blend < 0.5 ? fromIndex : toIndex];
-    this.visual.setTexture(nearest.key, nearest.frame);
-    this.visual.setFlipX(this.state.facing === "right");
-    this.visual.setRotation(Math.sin(this.phase) * LEAN_MAX_RAD * this.walkIntensity);
+    const { fromIndex, toIndex, blend } = keyframeBlend(this.phase, CYCLE.length);
+    const slot = blend < 0.5 ? fromIndex : toIndex;
+    const frame = frameIndex(this.state.facing, slot);
+    if (frame !== this.currentFrame) {
+      this.visual.setFrame(frame);
+      this.currentFrame = frame;
+    }
+    this.visual.setFlipX(MIRRORED.has(this.state.facing));
   }
 
   getState(): PlayerState {

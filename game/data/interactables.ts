@@ -1,74 +1,112 @@
-import { TILE_SIZE } from "@/game/config/world";
-import { ROOMS } from "@/game/world/rooms";
 import type { Interactable } from "@/game/types/interaction";
-
-const px = (tiles: number) => tiles * TILE_SIZE;
 
 const INTERACTION_RADIUS = 14;
 
-/** World-pixel center of a tile at (localTileX, localTileY) within a room. */
-function roomPoint(roomId: string, localTileX: number, localTileY: number): { x: number; y: number } {
-  const room = ROOMS.find((r) => r.id === roomId);
-  if (!room) throw new Error(`Unknown room id: ${roomId}`);
-  return {
-    x: px(room.tiles.x + localTileX) + TILE_SIZE / 2,
-    y: px(room.tiles.y + localTileY) + TILE_SIZE / 2,
-  };
-}
-
-/** Every interactable object in the studio. Positions derive from ROOMS so they never drift from the drawn layout. */
+/**
+ * Every interactable object in the studio, one entry per real furniture
+ * instance in game/data/furnitureLayout.json. Positions are that instance's
+ * own anchor point nudged a few px clear of its collision footprint (see
+ * MEASURED_FOOTPRINTS in game/world/furnitureEditor.ts) onto open floor, so
+ * Mimi can actually stand within INTERACTION_RADIUS of it — verified live
+ * against furnitureEditor.footprintPolygons() and by walking to each one.
+ * Two furniture instances mapping to the same panelId (tv+sofa3, almari4+
+ * dressingtable) both open the same section, per the portfolio mapping.
+ */
 export const INTERACTABLES: Interactable[] = [
+  // tv (living room, against west wall) -> Experience
   {
-    id: "contact",
-    ...roomPoint("entrance", 3, 2),
+    id: "tv",
+    x: 49,
+    y: 155,
     radius: INTERACTION_RADIUS,
-    prompt: "[E] Contact Mimi",
-    panelId: "contact",
-  },
-  {
-    id: "about",
-    // Was local (3, 8) — sat inside the TV/centertable collision footprints
-    // (see game/data/furnitureLayout.json), so no reachable floor point
-    // fell within INTERACTION_RADIUS of it. Moved 2 tiles south, in front
-    // of the sofa, onto open floor.
-    ...roomPoint("living-room", 3, 10),
-    radius: INTERACTION_RADIUS,
-    prompt: "[E] About Mimi",
-    panelId: "about",
-  },
-  {
-    id: "experience",
-    ...roomPoint("living-room", 9, 3),
-    radius: INTERACTION_RADIUS,
-    prompt: "[E] View Experience",
     panelId: "experience",
   },
+  // sofa3 (living room) -> Experience
   {
-    id: "quick-cv",
-    ...roomPoint("bedroom-study", 1, 1),
+    id: "sofa",
+    x: 102,
+    y: 173,
     radius: INTERACTION_RADIUS,
-    prompt: "[E] Quick CV",
+    panelId: "experience",
+  },
+  // kitchen counter (living room, north-west corner) -> About Me
+  {
+    id: "kitchen",
+    x: 51,
+    y: 69,
+    radius: INTERACTION_RADIUS,
+    panelId: "about",
+  },
+  // Bookshelf1 (bedroom-study) -> Education
+  {
+    id: "bookshelf",
+    x: 268,
+    y: 50,
+    radius: INTERACTION_RADIUS,
+    panelId: "education",
+  },
+  // Etable (entrance console/cabinet) -> Contact Me
+  {
+    id: "cabinet",
+    x: 144,
+    y: 288,
+    radius: INTERACTION_RADIUS,
+    panelId: "contact",
+  },
+  // Entrance doorway zone (no distinct phone sprite in the asset set) -> Contact Me
+  {
+    id: "entrance-phone",
+    x: 184,
+    y: 264,
+    radius: INTERACTION_RADIUS,
+    panelId: "contact",
+  },
+  // dressingtable (bedroom-study) -> Quick CV
+  {
+    id: "dressing-table",
+    x: 264,
+    y: 188,
+    radius: INTERACTION_RADIUS,
     panelId: "cv",
   },
+  // almari4 (bedroom-study) -> Quick CV
   {
-    id: "projects",
-    ...roomPoint("bedroom-study", 5, 1),
+    id: "almari",
+    x: 264,
+    y: 215,
     radius: INTERACTION_RADIUS,
-    prompt: "[E] View Projects",
+    panelId: "cv",
+  },
+  // dining (living room) -> Tech Stack
+  {
+    id: "dining-table",
+    x: 148,
+    y: 96,
+    radius: INTERACTION_RADIUS,
+    panelId: "techStack",
+  },
+  // pc (bedroom-study) -> Projects
+  {
+    id: "pc",
+    x: 350,
+    y: 58,
+    radius: INTERACTION_RADIUS,
     panelId: "projects",
   },
+  // bed (bedroom-study, against east wall) -> Skills
   {
-    id: "skills",
-    ...roomPoint("bedroom-study", 1, 4),
+    id: "bed",
+    x: 364,
+    y: 238,
     radius: INTERACTION_RADIUS,
-    prompt: "[E] View Skills",
     panelId: "skills",
   },
+  // garden-sofa (garden) -> Currently Learning
   {
-    id: "education",
-    ...roomPoint("bedroom-study", 5, 4),
+    id: "garden",
+    x: 357,
+    y: 304,
     radius: INTERACTION_RADIUS,
-    prompt: "[E] Education",
-    panelId: "education",
+    panelId: "currentlyLearning",
   },
 ];

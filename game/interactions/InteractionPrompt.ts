@@ -1,6 +1,7 @@
 import * as Phaser from "phaser";
 import { InteractionSystem, INTERACTION_EVENTS } from "@/game/interactions/InteractionSystem";
 import type { Interactable } from "@/game/types/interaction";
+import { PORTFOLIO_SECTIONS } from "@/game/data/portfolio";
 import { createGameText, PROMPT_STYLE } from "@/game/ui/textStyles";
 import { Player, PLAYER_HEIGHT } from "@/game/entities/Player";
 import { DEPTH } from "@/game/world/depth";
@@ -53,7 +54,7 @@ export class InteractionPrompt {
       this.border.setVisible(false);
       return;
     }
-    this.text.setText(interactable.prompt);
+    this.text.setText(`E — ${PORTFOLIO_SECTIONS[interactable.panelId].title}`);
     this.text.setVisible(true);
     this.border.setVisible(true);
     this.reposition();

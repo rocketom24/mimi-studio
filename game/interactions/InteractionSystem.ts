@@ -6,6 +6,9 @@ export const INTERACTION_EVENTS = {
   Open: "open",
 } as const;
 
+/** Extra px beyond an interactable's own radius before its prompt drops — keeps the prompt from flickering when Mimi idles right at the edge. */
+const EXIT_RADIUS_MARGIN = 6;
+
 /**
  * Tracks which interactable Mimi is closest to and fires the E-key interaction.
  * Knows nothing about portfolio content — interactables are opaque data with a panelId.
@@ -25,10 +28,10 @@ export class InteractionSystem extends Phaser.Events.EventEmitter {
   }
 
   update(playerX: number, playerY: number): void {
-    const closest = this.findClosest(playerX, playerY);
-    if (closest?.id !== this.current?.id) {
-      this.current = closest;
-      this.emit(INTERACTION_EVENTS.Prompt, closest);
+    const next = this.findClosest(playerX, playerY) ?? this.stickyCurrent(playerX, playerY);
+    if (next?.id !== this.current?.id) {
+      this.current = next;
+      this.emit(INTERACTION_EVENTS.Prompt, next);
     }
 
     if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
@@ -39,6 +42,13 @@ export class InteractionSystem extends Phaser.Events.EventEmitter {
   /** Programmatic trigger for the current closest interactable. Keyboard is only one caller — a future mobile button calls this too. */
   interact(): void {
     if (this.current) this.emit(INTERACTION_EVENTS.Open, this.current);
+  }
+
+  /** Keeps the current prompt showing past its own radius, out to EXIT_RADIUS_MARGIN, so standing right at the edge doesn't flicker it off. */
+  private stickyCurrent(playerX: number, playerY: number): Interactable | null {
+    if (!this.current) return null;
+    const dist = Phaser.Math.Distance.Between(playerX, playerY, this.current.x, this.current.y);
+    return dist <= this.current.radius + EXIT_RADIUS_MARGIN ? this.current : null;
   }
 
   private findClosest(playerX: number, playerY: number): Interactable | null {
