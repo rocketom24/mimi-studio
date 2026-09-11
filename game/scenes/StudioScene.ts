@@ -159,6 +159,7 @@ export class StudioScene extends Phaser.Scene {
 
     this.input.keyboard?.on("keydown-ESC", this.handleEscape, this);
 
+    this.events.emit(SCENE_EVENTS.ZoomChange, this.zoomFactor);
     this.game.events.emit(GAME_EVENTS.StudioReady, this);
   }
 
@@ -273,6 +274,7 @@ export class StudioScene extends Phaser.Scene {
     if (gap === 0) return;
     this.zoomFactor = Math.abs(gap) < ZOOM_SNAP_EPSILON ? this.targetZoomFactor : Phaser.Math.Linear(this.zoomFactor, this.targetZoomFactor, ZOOM_SMOOTHING);
     this.applyCameraFraming();
+    this.events.emit(SCENE_EVENTS.ZoomChange, this.zoomFactor);
   }
 
   /** Called by Phaser's ScaleManager whenever the canvas is resized (window resize, container resize) — the game size is no longer a fixed constant, so every viewport-dependent calc has to redo itself here instead of once at create(). */

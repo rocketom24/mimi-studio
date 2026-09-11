@@ -91,6 +91,17 @@ export interface ExperienceEntry {
 
 export const EXPERIENCE: readonly ExperienceEntry[] = [
   {
+    company: "Self-Employed",
+    role: "Solo Developer",
+    dates: "September 2025 – Present",
+    location: "Dhaka, Bangladesh",
+    bullets: [
+      "Building production web apps end to end, solo: database schema, backend logic, UI, and deployment.",
+      "Shipped a full restaurant operating system for a sushi place in Milan, covering reservations, kitchen workflow, and Stripe payments.",
+      "Designed and built this cozy game-portfolio, along with other personal projects like an Urdu poetry writing app.",
+    ],
+  },
+  {
     company: "EdSparkle Education Consultancy",
     role: "Education Consultant & Marketing Manager",
     dates: "June 2025 – September 2025",

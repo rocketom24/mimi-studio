@@ -9,6 +9,7 @@ import type { MovementIntent } from "@/game/types/input";
 import type { PortfolioSectionId } from "@/game/data/portfolio";
 import PortfolioPanel from "@/components/game/PortfolioPanel";
 import TouchControls from "@/components/game/TouchControls";
+import StudioHud from "@/components/game/StudioHud";
 import { useIsTouchDevice } from "@/lib/useIsTouchDevice";
 import { FURNITURE_ASSET_FILES_REGISTRY_KEY } from "@/game/world/furnitureEditorAssets";
 
@@ -23,6 +24,8 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
   const sceneRef = useRef<StudioScene | null>(null);
   const [panelId, setPanelId] = useState<PortfolioSectionId | null>(null);
   const [canInteract, setCanInteract] = useState(false);
+  const [zoomFactor, setZoomFactor] = useState(1);
+  const [hasStartedMoving, setHasStartedMoving] = useState(false);
   const isTouchDevice = useIsTouchDevice();
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
           scene.events.on(SCENE_EVENTS.InteractionPromptChange, (interactable: Interactable | null) =>
             setCanInteract(interactable !== null),
           );
+          scene.events.on(SCENE_EVENTS.ZoomChange, (zoom: number) => setZoomFactor(zoom));
         });
       },
     );
@@ -57,6 +61,19 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
       sceneRef.current = null;
     };
   }, [furnitureAssetFiles]);
+
+  // First-visit hint (rendered by StudioHud) fades as soon as the player does
+  // anything — walks, taps the D-pad, or clicks a furniture piece to navigate.
+  useEffect(() => {
+    if (hasStartedMoving) return;
+    const markStarted = () => setHasStartedMoving(true);
+    window.addEventListener("keydown", markStarted, { once: true });
+    containerRef.current?.addEventListener("pointerdown", markStarted, { once: true });
+    return () => {
+      window.removeEventListener("keydown", markStarted);
+      containerRef.current?.removeEventListener("pointerdown", markStarted);
+    };
+  }, [hasStartedMoving]);
 
   const handleClose = () => {
     setPanelId(null);
@@ -70,10 +87,12 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
   }, [panelId]);
 
   const handleDirection = (direction: keyof MovementIntent, pressed: boolean) => {
+    if (pressed) setHasStartedMoving(true);
     sceneRef.current?.touchInput.setDirection(direction, pressed);
   };
 
   const handleInteract = () => {
+    setHasStartedMoving(true);
     sceneRef.current?.interact();
   };
 
@@ -82,6 +101,7 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
       <div className="relative h-full flex-1 overflow-hidden">
         <div ref={containerRef} className="h-full w-full" />
       </div>
+      <StudioHud zoomFactor={zoomFactor} isTouchDevice={isTouchDevice} hasStartedMoving={hasStartedMoving} />
       {isTouchDevice && (
         <TouchControls
           onDirection={handleDirection}

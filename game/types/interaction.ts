@@ -19,4 +19,5 @@ export const SCENE_EVENTS = {
   InteractionOpen: "interactionOpen",
   InteractionClose: "interactionClose",
   InteractionPromptChange: "interactionPromptChange",
+  ZoomChange: "zoomChange",
 } as const;
