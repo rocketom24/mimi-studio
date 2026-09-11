@@ -156,19 +156,6 @@ export function polygonOverlapsAabb(polygon: readonly Point[], aabbCx: number, a
   return true;
 }
 
-/**
- * Signed minimum-translation vector to push an AABB fully outside one convex
- * polygon it overlaps (or {x:0,y:0} if it doesn't, or is only touching at the
- * boundary). Same axis set as polygonOverlapsAabb. Per axis, the correct
- * separation distance is min(polyMax-aabbMin, aabbMax-polyMin) — NOT the
- * naive interval-intersection length (min(polyMax,aabbMax)-max(polyMin,aabbMin)),
- * which under-measures whenever the AABB is nested well inside the polygon's
- * projection (a plain corner clip is fine, but a deeply-embedded body — e.g.
- * shoved into furniture by a wall's own instant separation — needs the full
- * distance to either edge, not just its own projected width). The axis with
- * the smallest such distance is the push direction (standard MTV heuristic:
- * escape via the nearest edge).
- */
 // Tiny extra clearance added to every push-out so the body lands strictly
 // outside the polygon rather than exactly touching it — without this,
 // polygonOverlapsAabb's boundary-inclusive test would still report "overlap"
@@ -176,20 +163,66 @@ export function polygonOverlapsAabb(polygon: readonly Point[], aabbCx: number, a
 // very next frame would try to push out all over again from a depth of ~0.
 const PUSH_SKIN = 0.01;
 
-function polygonPushOutOfAabb(polygon: readonly Point[], aabbCx: number, aabbCy: number, aabbHalfW: number, aabbHalfH: number): Point {
-  if (polygon.length < 2) return { x: 0, y: 0 };
+/**
+ * Single minimum translation that pushes an AABB clear of EVERY polygon in
+ * `polygons` it currently overlaps at once ({x:0,y:0} if it overlaps none).
+ *
+ * Deliberately set-wise, not one polygon at a time. Furniture footprints are
+ * authored as several convex pieces sharing edges (an L-shaped counter, a
+ * desk decomposed into columns of differing depth), so a body shoved into
+ * one usually overlaps two or three adjacent pieces. Resolving them
+ * sequentially deadlocks: escaping piece A along A's own nearest edge drops
+ * the body into neighbour B, whose nearest edge points straight back into A.
+ * With an even number of passes that nets to exactly zero movement every
+ * frame — Mimi frozen solid inside the furniture, which is precisely how she
+ * got stuck. Solving the whole overlap set against one axis can't ping-pong:
+ * the chosen move clears all of them together.
+ *
+ * Per candidate axis (world X/Y plus every overlapping polygon's edge
+ * normals), a single displacement t clears polygon p if t >= depthPos(p) or
+ * t <= -depthNeg(p); one scalar can't satisfy some of each, so the axis costs
+ * min(max depthPos, max depthNeg) over the whole set. Cheapest axis wins —
+ * the usual MTV heuristic of escaping via the nearest edge, generalised from
+ * one shape to the set.
+ *
+ * Per polygon the separation distance is depthPos/depthNeg measured to the
+ * polygon's far edge, NOT the naive interval-intersection length
+ * (min(polyMax,aabbMax) - max(polyMin,aabbMin)), which under-measures
+ * whenever the AABB sits well inside the polygon's projection: a corner clip
+ * is fine either way, but a deeply-embedded body needs the full distance out.
+ */
+function overlappingPolygons(
+  polygons: readonly (readonly Point[])[],
+  aabbCx: number,
+  aabbCy: number,
+  aabbHalfW: number,
+  aabbHalfH: number,
+): (readonly Point[])[] {
+  const hits: (readonly Point[])[] = [];
+  for (const polygon of polygons) {
+    if (polygon.length < 3) continue;
+    if (polygonOverlapsAabb(polygon, aabbCx, aabbCy, aabbHalfW, aabbHalfH)) hits.push(polygon);
+  }
+  return hits;
+}
+
+function setPushOut(hits: readonly (readonly Point[])[], aabbCx: number, aabbCy: number, aabbHalfW: number, aabbHalfH: number): Point {
+  if (hits.length === 0) return { x: 0, y: 0 };
+
   const axes: Point[] = [
     { x: 1, y: 0 },
     { x: 0, y: 1 },
   ];
-  for (let i = 0; i < polygon.length; i++) {
-    const a = polygon[i];
-    const b = polygon[(i + 1) % polygon.length];
-    const edgeX = b.x - a.x;
-    const edgeY = b.y - a.y;
-    const len = Math.hypot(edgeX, edgeY);
-    if (len === 0) continue;
-    axes.push({ x: -edgeY / len, y: edgeX / len });
+  for (const polygon of hits) {
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % polygon.length];
+      const edgeX = b.x - a.x;
+      const edgeY = b.y - a.y;
+      const len = Math.hypot(edgeX, edgeY);
+      if (len === 0) continue;
+      axes.push({ x: -edgeY / len, y: edgeX / len });
+    }
   }
 
   let bestDepth = Infinity;
@@ -197,26 +230,35 @@ function polygonPushOutOfAabb(polygon: readonly Point[], aabbCx: number, aabbCy:
   let bestSign = 1;
 
   for (const axis of axes) {
-    let polyMin = Infinity;
-    let polyMax = -Infinity;
-    for (const p of polygon) {
-      const proj = p.x * axis.x + p.y * axis.y;
-      if (proj < polyMin) polyMin = proj;
-      if (proj > polyMax) polyMax = proj;
-    }
     const aabbCenterProj = aabbCx * axis.x + aabbCy * axis.y;
     const aabbRadius = Math.abs(axis.x) * aabbHalfW + Math.abs(axis.y) * aabbHalfH;
     const aabbMin = aabbCenterProj - aabbRadius;
     const aabbMax = aabbCenterProj + aabbRadius;
-    if (polyMax < aabbMin || aabbMax < polyMin) return { x: 0, y: 0 }; // a separating axis exists - no overlap at all
 
-    const depthPos = polyMax - aabbMin; // push the AABB in +axis until its min clears the polygon's max
-    const depthNeg = aabbMax - polyMin; // push it in -axis until its max clears the polygon's min
-    const depth = Math.min(depthPos, depthNeg);
+    // -Infinity, not 0: a member the body is already clear of on this axis
+    // reports a negative depth, and that must stay negative so it doesn't
+    // inflate the cost of an axis the rest of the cluster can be escaped by.
+    let maxDepthPos = -Infinity;
+    let maxDepthNeg = -Infinity;
+    for (const polygon of hits) {
+      let polyMin = Infinity;
+      let polyMax = -Infinity;
+      for (const p of polygon) {
+        const proj = p.x * axis.x + p.y * axis.y;
+        if (proj < polyMin) polyMin = proj;
+        if (proj > polyMax) polyMax = proj;
+      }
+      const depthPos = polyMax - aabbMin; // move +axis until the body's min clears this polygon's max
+      const depthNeg = aabbMax - polyMin; // move -axis until the body's max clears this polygon's min
+      if (depthPos > maxDepthPos) maxDepthPos = depthPos;
+      if (depthNeg > maxDepthNeg) maxDepthNeg = depthNeg;
+    }
+
+    const depth = Math.min(maxDepthPos, maxDepthNeg);
     if (depth < bestDepth) {
       bestDepth = depth;
       bestAxis = axis;
-      bestSign = depthPos <= depthNeg ? 1 : -1;
+      bestSign = maxDepthPos <= maxDepthNeg ? 1 : -1;
     }
   }
 
@@ -225,22 +267,75 @@ function polygonPushOutOfAabb(polygon: readonly Point[], aabbCx: number, aabbCy:
   return { x: bestAxis.x * push * bestSign, y: bestAxis.y * push * bestSign };
 }
 
+/** Cap on how many times escapePush widens its cluster before giving up and returning its best answer so far. Every round adds at least one polygon, so this bounds it at "clusters up to 8 pieces deep resolve in one frame"; anything worse just takes another frame. */
+const ESCAPE_ROUNDS = 8;
+
+/**
+ * Displacement that gets a body embedded in furniture back out into open
+ * floor, or {x:0,y:0} if it isn't embedded.
+ *
+ * A plain minimum-translation escape is LOCAL, and that isn't enough here.
+ * Footprints are decomposed into adjacent convex pieces, so the cheapest way
+ * out of piece A is very often a short hop straight into neighbour B, whose
+ * own cheapest way out is a hop back into A. The body then oscillates between
+ * two interior positions forever and reads as frozen solid inside the
+ * furniture — the real "Mimi gets stuck" failure, reproducible by dropping
+ * her in the middle of the dining set. Solving A and B together doesn't fix
+ * it either, because at any one instant she only overlaps one of them.
+ *
+ * So: solve, and if the answer lands her in something new, fold that piece
+ * into the cluster and re-solve FROM THE ORIGINAL POSITION with the wider
+ * set. Each round the answer has to clear strictly more of the cluster, so it
+ * walks outward to an escape that clears the whole decomposed region in one
+ * translation, instead of ping-ponging around inside it.
+ */
+function escapePush(polygons: readonly (readonly Point[])[], cx: number, cy: number, halfW: number, halfH: number): Point {
+  const cluster = overlappingPolygons(polygons, cx, cy, halfW, halfH);
+  if (cluster.length === 0) return { x: 0, y: 0 };
+
+  let best: Point = { x: 0, y: 0 };
+  for (let round = 0; round < ESCAPE_ROUNDS; round++) {
+    const push = setPushOut(cluster, cx, cy, halfW, halfH);
+    if (push.x === 0 && push.y === 0) return best;
+    best = push;
+    const landed = overlappingPolygons(polygons, cx + push.x, cy + push.y, halfW, halfH);
+    if (landed.length === 0) return push;
+    let widened = false;
+    for (const polygon of landed) {
+      if (cluster.includes(polygon)) continue;
+      cluster.push(polygon);
+      widened = true;
+    }
+    if (!widened) return push; // nothing new to learn; take the best answer we have
+  }
+  return best;
+}
+
 /**
  * Resolves Mimi's body against every furniture polygon for one physics step.
  *
- * First de-penetrates: pushes the body fully clear of any polygon it's
- * already overlapping (a few passes, since escaping one piece can land
- * inside a neighbor placed edge-to-edge with it) so she can never stay
- * wedged no matter how she got embedded — a wall's own instant Arcade
- * separation shoving her sideways into furniture flush against it, a spawn
- * overlap, anything. This runs unconditionally, independent of her current
- * velocity, which is what makes it an actual escape instead of just another
- * "don't move into it" check.
+ * First de-penetrates: pushes the body clear of the whole cluster of pieces
+ * it's embedded in (see escapePush) so she can never stay wedged no matter
+ * how she got there — a wall's own instant Arcade separation shoving her
+ * sideways into furniture flush against it, a spawn overlap, anything. This
+ * runs unconditionally, independent of her current velocity, which is what
+ * makes it an actual escape instead of just another "don't move into it"
+ * check.
  *
- * Then, from that corrected position, zeroes whichever velocity axis would
- * carry her INTO a polygon this step — axis-separated so sliding along a
- * piece's edge still works (blocking X alone doesn't block a simultaneous Y
- * move, and vice versa).
+ * Then, from that corrected position, removes only the part of her velocity
+ * that points INTO the furniture this step, leaving the part that runs along
+ * its surface — so she slides around furniture instead of stopping dead
+ * against it. That's v -= n * (v·n), with n the same set-wise push-out
+ * direction used for de-penetration.
+ *
+ * This replaced a per-world-axis "zero vx if moving in X would overlap, then
+ * zero vy likewise" test. That only slides along edges that happen to run
+ * along world X or Y; against anything diagonal (the bed's angled frame, the
+ * kitchen's corner run, any rotated piece) BOTH axis probes report a hit, so
+ * both axes got zeroed and she stuck fast to the edge. Projecting onto the
+ * contact surface slides at any angle. Two passes, so an inside corner —
+ * two surfaces at once — resolves as well; if the step is still inside
+ * something after that there's genuinely nowhere to slide, so she stops.
  */
 export function resolveFurnitureCollision(
   cx: number,
@@ -255,33 +350,33 @@ export function resolveFurnitureCollision(
   let x = cx;
   let y = cy;
 
-  if (polygons.length > 0) {
-    for (let pass = 0; pass < 4; pass++) {
-      let moved = false;
-      for (const polygon of polygons) {
-        const push = polygonPushOutOfAabb(polygon, x, y, halfW, halfH);
-        if (push.x !== 0 || push.y !== 0) {
-          x += push.x;
-          y += push.y;
-          moved = true;
-        }
-      }
-      if (!moved) break;
-    }
-  }
+  const escape = escapePush(polygons, x, y, halfW, halfH);
+  x += escape.x;
+  y += escape.y;
 
-  if (dt <= 0 || polygons.length === 0) return { x, y, vx, vy };
+  if (dt <= 0 || polygons.length === 0 || (vx === 0 && vy === 0)) return { x, y, vx, vy };
 
   let resolvedVx = vx;
-  if (vx !== 0 && polygons.some((polygon) => polygonOverlapsAabb(polygon, x + vx * dt, y, halfW, halfH))) {
-    resolvedVx = 0;
-  }
-
   let resolvedVy = vy;
-  if (vy !== 0 && polygons.some((polygon) => polygonOverlapsAabb(polygon, x + resolvedVx * dt, y + vy * dt, halfW, halfH))) {
-    resolvedVy = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    // The LOCAL contact push here, not escapePush: this wants the normal of
+    // the surface she's about to press against, not the way out of a cluster.
+    const probeX = x + resolvedVx * dt;
+    const probeY = y + resolvedVy * dt;
+    const push = setPushOut(overlappingPolygons(polygons, probeX, probeY, halfW, halfH), probeX, probeY, halfW, halfH);
+    const length = Math.hypot(push.x, push.y);
+    if (length === 0) return { x, y, vx: resolvedVx, vy: resolvedVy }; // this step is clear — walk it
+    const nx = push.x / length;
+    const ny = push.y / length;
+    const into = resolvedVx * nx + resolvedVy * ny;
+    if (into >= 0) break; // not actually driving into it; nothing left to project out
+    resolvedVx -= nx * into;
+    resolvedVy -= ny * into;
   }
 
+  if (overlappingPolygons(polygons, x + resolvedVx * dt, y + resolvedVy * dt, halfW, halfH).length > 0) {
+    return { x, y, vx: 0, vy: 0 }; // boxed in — nowhere to slide
+  }
   return { x, y, vx: resolvedVx, vy: resolvedVy };
 }
 

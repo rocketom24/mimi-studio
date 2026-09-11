@@ -55,19 +55,19 @@ const LEFT_LEG_PIECE_BACK = { sx: 5, sy: 154, sw: 45, sh: 80, dx: 15, dy: 5 };
 const SCALE_REFERENCE_HEIGHT = 232;
 export const PLAYER_HEIGHT = 32;
 
-// Collision body is sized off the original down-idle crop (108x232), fixed
-// independently of whichever art the idle texture points at, so swapping
-// the idle pose never resizes/repositions the hitbox.
-const BODY_REFERENCE_WIDTH = 108;
-const BODY_REFERENCE_HEIGHT = 232;
-
-// Body hitbox as fractions of the down-idle frame (the canonical pose used
-// to size the physics body): hair/face ends and the sweater collar starts
-// ~33% down, and the sweater/arms are already the widest thing in the crop
-// so the box only needs a small side margin. The hitbox does not change
-// with facing/animation - only the visual sprite's frame does.
-const BODY_TOP_FRACTION = 0.33;
-const BODY_SIDE_MARGIN_FRACTION = 0.05;
+// Mimi's collision body is her FLOOR FOOTPRINT, in world px - a small square
+// centred on her feet. World x/y is floor space in this dimetric projection
+// (see projection.ts), so a sprite measurement taken in screen pixels means
+// nothing here: sizing the body off the down-idle crop (as this used to,
+// 108x232 source px scaled by 0.138) gave her a 13x21 world-px floor
+// footprint - 0.8 x 1.3 tiles, over a tile deep - whose centre sat ~10px
+// NORTH of where she was actually standing. That single offset is what let
+// her walk into the front of every piece of furniture while a phantom strip
+// behind each one blocked open floor.
+//
+// 10px is ~0.6 tile, comfortably narrower than the 2-tile (32px) doorways
+// and close to how wide she reads on the floor.
+const BODY_FOOTPRINT_PX = 10;
 
 // Entrance floor (world tiles x8-13, y14-19), near the front door.
 export const PLAYER_SPAWN_TILE_X = 10;
@@ -299,19 +299,22 @@ export class Player {
     this.lastWorldY = y;
 
     this.scale = PLAYER_HEIGHT / SCALE_REFERENCE_HEIGHT;
-    const bodyOffsetX = Math.round(BODY_REFERENCE_WIDTH * BODY_SIDE_MARGIN_FRACTION);
-    const bodyOffsetY = Math.round(BODY_REFERENCE_HEIGHT * BODY_TOP_FRACTION);
-    const bodyWidth = Math.round(BODY_REFERENCE_WIDTH - 2 * bodyOffsetX);
-    const bodyHeight = Math.round(BODY_REFERENCE_HEIGHT - bodyOffsetY);
 
     this.sprite = scene.physics.add.sprite(x, y, DOWN_IDLE.key, DOWN_IDLE.frame);
     this.sprite.setOrigin(0.5, 1);
     this.sprite.setVisible(false);
     this.sprite.setScale(this.scale);
 
+    // Body size/offset are declared in the sprite's own source pixels; Arcade
+    // multiplies both by the sprite's scale to get world px (Body.updateBounds
+    // / updateFromGameObject). Working back from BODY_FOOTPRINT_PX therefore
+    // needs the /scale, and the offset is measured from the frame's display
+    // origin (the feet, origin 0.5/1) so the resulting box lands centred on
+    // them rather than somewhere up the sprite.
+    const bodySource = Math.round(BODY_FOOTPRINT_PX / this.scale);
     const body = this.sprite.body as Phaser.Physics.Arcade.Body;
-    body.setSize(bodyWidth, bodyHeight);
-    body.setOffset(bodyOffsetX, bodyOffsetY);
+    body.setSize(bodySource, bodySource, false);
+    body.setOffset(this.sprite.displayOriginX - bodySource / 2, this.sprite.displayOriginY - bodySource / 2);
     body.setCollideWorldBounds(true);
 
     this.visual = scene.add.sprite(x, y, DOWN_IDLE.key, DOWN_IDLE.frame);

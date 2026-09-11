@@ -101,6 +101,55 @@ describe("resolveFurnitureCollision", () => {
     expect(result.vx).toBe(0);
     expect(result.vy).toBe(30);
   });
+
+  it("slides along a DIAGONAL edge instead of stopping dead (the old axis-zeroing stuck here)", () => {
+    // A 45deg edge: walking straight at it used to zero both axes, because
+    // the X-only probe and the Y-only probe each land inside it, so Mimi
+    // glued herself to any angled piece (bed frame, kitchen corner run).
+    // Bar running along the (1,-1) anti-diagonal; walk due east into it.
+    const diagonal = obbToPolygon(0, 0, 30, 4, -45);
+    const result = resolveFurnitureCollision(-5, -5, 2, 2, 60, 0, 1 / 60, [diagonal]);
+    const speed = Math.hypot(result.vx, result.vy);
+    expect(speed).toBeGreaterThan(20); // still moving - it slid, it didn't stop
+    // and what's left runs ALONG the edge (+x-y), not into it
+    expect(result.vx + result.vy).toBeCloseTo(0, 3);
+    expect(result.vx).toBeGreaterThan(0);
+  });
+
+  it("escapes a body embedded across two edge-to-edge polygons (the ping-pong deadlock)", () => {
+    // How real footprints are authored: one piece of furniture as adjacent
+    // convex columns of differing depth. Resolving them one at a time,
+    // escaping the shallow one's nearest edge drops her into the deep one and
+    // vice versa, so an even number of passes netted to zero movement — she
+    // froze inside the furniture, every frame, forever.
+    const shallow = obbToPolygon(-6, 0, 6, 6, 0); // x -12..0, y -6..6
+    const deep = obbToPolygon(6, 0, 6, 14, 0); //    x   0..12, y -14..14
+    const result = resolveFurnitureCollision(0, 0, 2, 2, 0, 0, 1 / 60, [shallow, deep]);
+    expect(polygonOverlapsAabb(shallow, result.x, result.y, 2, 2)).toBe(false);
+    expect(polygonOverlapsAabb(deep, result.x, result.y, 2, 2)).toBe(false);
+  });
+
+  it("escapes a body dropped deep inside a run of tiled columns", () => {
+    // The dining set's real shape: one footprint decomposed into a row of
+    // adjacent columns, each far wider than the body. Every column's own
+    // cheapest exit is a short hop into the column next door, so a local
+    // push-out cycles between interiors forever however the overlap set is
+    // grouped — the escape has to widen until it clears the whole run.
+    const columns = [-30, -18, -6, 6, 18, 30].map((cx) => obbToPolygon(cx, 0, 6, 20, 0));
+    const result = resolveFurnitureCollision(0, 0, 3, 3, 0, 0, 1 / 60, columns);
+    for (const column of columns) {
+      expect(polygonOverlapsAabb(column, result.x, result.y, 3, 3)).toBe(false);
+    }
+  });
+
+  it("stops only when there is genuinely nowhere to slide (inside corner)", () => {
+    // Two faces meeting at a right angle, Mimi driving into both at once.
+    const west = obbToPolygon(-10, 0, 5, 30, 0);
+    const north = obbToPolygon(0, -10, 30, 5, 0);
+    const result = resolveFurnitureCollision(-2, -2, 2, 2, -80, -80, 1 / 60, [west, north]);
+    expect(result.vx).toBe(0);
+    expect(result.vy).toBe(0);
+  });
 });
 
 describe("pointInPolygon", () => {

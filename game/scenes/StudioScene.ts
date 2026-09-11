@@ -1,6 +1,7 @@
 import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
 import { project, projectedSize } from "@/game/world/projection";
+import { visualDepth } from "@/game/world/depth";
 import type { FootprintPolygon } from "@/game/world/collisionShapes";
 import { ROOMS } from "@/game/world/rooms";
 import { createHouseFloor } from "@/game/world/floorSystem";
@@ -140,6 +141,20 @@ export class StudioScene extends Phaser.Scene {
     if (this.inputLocked || this.furnitureEditingActive) return;
 
     this.player.update(delta, footprints.map((f) => f.points));
+    // Mimi's own render order can't come from her position alone — see
+    // FurnitureEditor.bodyRenderDepth. Applied after update(), which is the
+    // only thing that sets her default depth (Player.reprojectVisual).
+    const body = this.player.sprite.body as Phaser.Physics.Arcade.Body;
+    this.player.visual.setDepth(
+      this.furnitureEditor.bodyRenderDepth(
+        body.center.x,
+        body.center.y,
+        body.halfWidth,
+        body.halfHeight,
+        this.player.visual,
+        visualDepth(this.player.worldX, this.player.worldY),
+      ),
+    );
     // Camera pan is meant to persist (Figma-style) until the viewer actually
     // takes control of Mimi again — see stopPan(). Restoring normal framing
     // only here, gated on real movement intent, is what makes that possible;

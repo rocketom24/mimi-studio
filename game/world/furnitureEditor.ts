@@ -408,6 +408,9 @@ function polygonArea(points: readonly Point[]): number {
 }
 const SELECTED_TINT = 0x8fd0ff;
 
+/** How far bodyRenderDepth() steps past a piece's depth to settle the order. Depths are spaced in world px (see visualDepth), so a fraction of a pixel is unambiguous without disturbing anything else. */
+const DEPTH_NUDGE = 0.5;
+
 /** Fallback display width (tiles) for a PNG with no entry below — e.g. a new asset just dropped into public/furniture/. */
 const DEFAULT_DISPLAY_WIDTH_TILES = 2;
 
@@ -545,6 +548,9 @@ export class FurnitureEditor {
   private collisionActive = false;
   /** Working copy of every kind's authored shapes — read-only fallback data now (seeds a fresh instance's first edit, see currentEffectiveLocalShapes); nothing in the redesigned Collision Editor writes to this map directly anymore, only to instanceCollisionShapes below. Populated from the Phaser loader cache in load(), not a static import — see preloadFurnitureEditorData. */
   private readonly collisionShapes: CollisionShapeMap = {};
+  /** Scratch rects reused by bodyRenderDepth()'s per-frame sprite-overlap test, so it allocates nothing in the update loop. */
+  private readonly bodyBounds = new Phaser.Geom.Rectangle();
+  private readonly itemBounds = new Phaser.Geom.Rectangle();
   /** Per-placed-instance collision overrides, keyed by item id — same local (fraction-of-baseWidth) point convention as collisionShapes, so both flow through the same transform/edit math. Every shape drawn in the Collision Editor lands here, scoped to the one placed item that was clicked. Populated from the Phaser loader cache in load(). */
   private readonly instanceCollisionShapes = new Map<string, Point[][]>();
   /** Canonical kind of whichever item editingInstanceId names — cached alongside it purely so baseWidth lookups don't need an extra items.get() at every mutation site. Always set/cleared together with editingInstanceId. */
@@ -654,26 +660,156 @@ export class FurnitureEditor {
   }
 
   /**
-   * Solid collision footprints (world px) for every currently spawned item
-   * that has an actual hand-drawn shape. No fallback: a kind/instance with
-   * nothing drawn yet in the editor's Collision mode is walk-through, not
-   * auto-guessed — collision only exists where someone explicitly drew it.
+   * Solid collision footprints (world px) for ONE placed item: its own saved
+   * shape if it has one, else its kind's shared shape, else the legacy
+   * auto-guessed footprint. That last fallback matters — a piece with NO
+   * collision at all is ghost furniture Mimi walks straight through, which is
+   * worse than an approximate box. "Show Collision" draws fallbacks amber
+   * rather than cyan, so an un-authored piece is obvious.
+   */
+  private itemFootprintPolygons(item: PlacedItem): FootprintPolygon[] {
+    const instanceOverride = this.instanceCollisionShapes.get(item.id);
+    const authored = instanceOverride && instanceOverride.length > 0 ? instanceOverride : this.collisionShapes[canonicalKind(item.kind)];
+    if (authored && authored.length > 0) {
+      const bw = baseDisplayWidth(item.kind);
+      return computeItemFootprintPolygons(item, authored, bw).map((points) => ({ points, authored: true }));
+    }
+    const obb = computeFootprintObb(item);
+    return [{ points: obbToPolygon(obb.cx, obb.cy, obb.halfW, obb.halfH, obb.angleDeg), authored: false }];
+  }
+
+  /**
+   * Solid collision footprints (world px) for every currently spawned item.
    * Recomputed live every call so it always reflects current
    * position/rotation/scale, including mid-drag/rotate/resize.
    */
   footprintPolygons(): FootprintPolygon[] {
     const result: FootprintPolygon[] = [];
     for (const item of this.items.values()) {
-      const canonical = canonicalKind(item.kind);
-      const instanceOverride = this.instanceCollisionShapes.get(item.id);
-      const authored = instanceOverride && instanceOverride.length > 0 ? instanceOverride : this.collisionShapes[canonical];
-      if (!authored || authored.length === 0) continue;
-      const bw = baseDisplayWidth(item.kind);
-      for (const points of computeItemFootprintPolygons(item, authored, bw)) {
-        result.push({ points, authored: true });
-      }
+      result.push(...this.itemFootprintPolygons(item));
     }
     return result;
+  }
+
+  /**
+   * Render order for one placed piece, from the CENTRE OF ITS COLLISION
+   * FOOTPRINT rather than from item.x/item.y.
+   *
+   * item.x/y is where the sprite's declared anchor (origin 0.5/1, i.e. the
+   * image's bottom-centre) lands — and on these assets that point is nowhere
+   * near the object's real base. Most furniture PNGs carry transparent margin
+   * below/right of the actual object, and the base of an iso sprite is a
+   * diamond whose lowest pixel is off to one side, so the anchor typically
+   * sits well SOUTH-EAST of the piece's own footprint (the sofa's is +17x
+   * +9y clear of it). Depth-sorting on that biased point made furniture win
+   * against Mimi even when she was standing squarely in front of it: she
+   * vanished behind the sofa/TV/wardrobe/bookshelf and read as being "inside"
+   * them. pc and kitchen looked right only because they're the two kinds with
+   * a hand-corrected ORIGIN_Y_BY_KIND entry, which happens to pull their
+   * anchors back onto their bases.
+   *
+   * The footprint centre is used rather than its front corner: for a body
+   * against any one of a rectangular footprint's four faces the centre sorts
+   * it the right way round, where a front-corner key fails for every piece
+   * wider than Mimi.
+   *
+   * This still only orders furniture against furniture. No single scalar per
+   * sprite can express iso occlusion for a body moving among them (a spot far
+   * north-east of a piece is genuinely in front of it, yet has a small x+y) —
+   * checked across the whole walkable floor, the best scalar still mis-sorts
+   * ~160 standing positions, which is what left Mimi hidden behind the kitchen
+   * and the dressing table. Mimi's own depth is therefore resolved against
+   * these values pairwise every frame instead; see bodyRenderDepth.
+   */
+  private footprintDepth(item: PlacedItem): number {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const { points } of this.itemFootprintPolygons(item)) {
+      for (const p of points) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+    }
+    if (!Number.isFinite(minX)) return visualDepth(item.x, item.y);
+    return visualDepth((minX + maxX) / 2, (minY + maxY) / 2);
+  }
+
+  /** Reapplies footprintDepth() — call after anything that moves, resizes or reshapes a piece. */
+  private applyDepth(item: PlacedItem): void {
+    item.image.setDepth(this.footprintDepth(item));
+  }
+
+  /**
+   * Render depth for Mimi, resolved against the furniture she's actually
+   * standing among instead of from her position alone.
+   *
+   * A single depth number per sprite can't express isometric occlusion. The
+   * real rule between two floor footprints A and B is "A draws in front iff
+   * A is entirely east of B, or entirely south of B" — two independent axis
+   * tests, which no scalar ordering reproduces. Sorting everything by x+y is
+   * only an approximation of it, and it breaks worst exactly where a piece
+   * wraps a corner: standing in the mouth of the L-shaped kitchen counter she
+   * is east of its west run AND south of its north run, so she is genuinely
+   * in front of the whole thing, yet her x+y sits below the counter's however
+   * that counter's key is chosen. Same for the dressing table. That's why she
+   * still vanished behind those two after the footprint-centre fix.
+   *
+   * So: apply the real rule per piece, then pick a depth that satisfies it.
+   * Only pieces whose sprite actually overlaps hers on screen are considered
+   * — order is unobservable otherwise, and ignoring distant pieces keeps the
+   * adjustment small and local. Where the constraints conflict (a genuinely
+   * ambiguous, interleaved spot) being drawn in front wins, because appearing
+   * on top of something reads as a much milder glitch than disappearing.
+   */
+  bodyRenderDepth(bodyCx: number, bodyCy: number, halfW: number, halfH: number, bodySprite: Phaser.GameObjects.Sprite, fallback: number): number {
+    const x0 = bodyCx - halfW;
+    const x1 = bodyCx + halfW;
+    const y0 = bodyCy - halfH;
+    const y1 = bodyCy + halfH;
+    bodySprite.getBounds(this.bodyBounds);
+
+    let mustOutDraw = -Infinity; // highest depth she has to beat
+    let mustBeUnder = Infinity; // lowest depth that has to beat her
+
+    for (const item of this.items.values()) {
+      item.image.getBounds(this.itemBounds);
+      if (!Phaser.Geom.Rectangle.Overlaps(this.bodyBounds, this.itemBounds)) continue;
+
+      let inFront = true;
+      let behind = true;
+      for (const { points } of this.itemFootprintPolygons(item)) {
+        let rx0 = Infinity;
+        let ry0 = Infinity;
+        let rx1 = -Infinity;
+        let ry1 = -Infinity;
+        for (const p of points) {
+          if (p.x < rx0) rx0 = p.x;
+          if (p.x > rx1) rx1 = p.x;
+          if (p.y < ry0) ry0 = p.y;
+          if (p.y > ry1) ry1 = p.y;
+        }
+        if (!(x0 >= rx1 || y0 >= ry1)) inFront = false;
+        if (!(x1 <= rx0 || y1 <= ry0)) behind = false;
+        if (!inFront && !behind) break;
+      }
+      if (inFront === behind) continue; // interleaved — no usable constraint
+
+      const depth = item.image.depth;
+      if (inFront) {
+        if (depth > mustOutDraw) mustOutDraw = depth;
+      } else if (depth < mustBeUnder) {
+        mustBeUnder = depth;
+      }
+    }
+
+    let depth = fallback;
+    if (depth >= mustBeUnder) depth = mustBeUnder - DEPTH_NUDGE;
+    if (depth <= mustOutDraw) depth = mustOutDraw + DEPTH_NUDGE; // applied last: in front wins a conflict
+    return depth;
   }
 
   /**
@@ -742,11 +878,11 @@ export class FurnitureEditor {
     }
     const baseScale = this.applyScale(image, data.kind, data.scale);
     image.setAngle(data.rotation);
-    image.setDepth(visualDepth(data.x, data.y));
     image.setInteractive({ draggable: true, useHandCursor: true });
 
     const item: PlacedItem = { ...data, image, baseScale };
     this.items.set(data.id, item);
+    this.applyDepth(item); // needs `item`, so it can't happen before this point
 
     image.on("pointerdown", (_pointer: Phaser.Input.Pointer, localX: number, localY: number) => {
       if (this.inputSuspended) return;
@@ -820,6 +956,7 @@ export class FurnitureEditor {
     if (!item) return;
     item.scale = Phaser.Math.Clamp(scale, SCALE_MIN, SCALE_MAX);
     this.applyScale(item.image, item.kind, item.scale);
+    this.applyDepth(item); // the footprint scaled with it, so its centre moved
     this.notifySelection();
   }
 
@@ -1063,7 +1200,7 @@ export class FurnitureEditor {
     (gameObject as Phaser.GameObjects.Image).setPosition(anchor.x, anchor.y);
     item.x = x;
     item.y = y;
-    (gameObject as Phaser.GameObjects.Image).setDepth(visualDepth(x, y));
+    this.applyDepth(item);
   }
 
   private handleWheel(pointer: Phaser.Input.Pointer, currentlyOver: Phaser.GameObjects.GameObject[], _dx: number, deltaY: number): void {
@@ -1072,6 +1209,7 @@ export class FurnitureEditor {
     if (!item || !currentlyOver.includes(item.image)) return;
     item.scale = Phaser.Math.Clamp(item.scale - Math.sign(deltaY) * SCALE_STEP, SCALE_MIN, SCALE_MAX);
     this.applyScale(item.image, item.kind, item.scale);
+    this.applyDepth(item);
     this.notifySelection();
   }
 
@@ -1081,6 +1219,7 @@ export class FurnitureEditor {
     if (!item) return;
     item.rotation = (item.rotation + ROTATE_STEP_DEG) % 360;
     item.image.setAngle(item.rotation);
+    this.applyDepth(item);
   }
 
   private handleDeleteKey(): void {
@@ -1439,7 +1578,13 @@ export class FurnitureEditor {
 
   /** Fires onCollisionShapesChange with the edited item's current shape count, selection, and undo/redo availability, so the panel can reflect them (enabling/disabling its buttons). */
   private notifyCollisionShapesChange(): void {
-    if (!this.onCollisionShapesChange || !this.editingInstanceId) return;
+    if (!this.editingInstanceId) return;
+    // Render order is derived from the footprint now (see footprintDepth), so
+    // redrawing a shape has to refresh it or the piece keeps sorting by the
+    // shape it had when the session opened.
+    const edited = this.items.get(this.editingInstanceId);
+    if (edited) this.applyDepth(edited);
+    if (!this.onCollisionShapesChange) return;
     this.onCollisionShapesChange({
       itemId: this.editingInstanceId,
       kind: this.editingKind ?? "",
