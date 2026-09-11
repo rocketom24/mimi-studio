@@ -2,8 +2,32 @@ import * as Phaser from "phaser";
 import { TILE_SIZE } from "@/game/config/world";
 import { ROOMS } from "@/game/world/rooms";
 import { computeWallRects } from "@/game/world/wallSystem";
+import type { PixelRect } from "@/game/types/world";
 
 const px = (tiles: number) => tiles * TILE_SIZE;
+
+/**
+ * Every axis-aligned solid rect Mimi's body collides with: wall segments plus
+ * hardcoded room furniture that hasn't opted out via `solid: false`. Shared by
+ * createWorldCollision (spawns the actual Arcade static bodies) and the
+ * click-to-navigate pathfinding grid (game/navigation/pathGrid.ts), so the two
+ * can never drift apart.
+ */
+export function staticSolidRects(): PixelRect[] {
+  const rects: PixelRect[] = [...computeWallRects()];
+  for (const room of ROOMS) {
+    for (const piece of room.furniture) {
+      if (piece.solid === false) continue;
+      rects.push({
+        x: px(room.tiles.x) + px(piece.x),
+        y: px(room.tiles.y) + px(piece.y),
+        w: px(piece.w),
+        h: px(piece.h),
+      });
+    }
+  }
+  return rects;
+}
 
 function addStaticRect(
   scene: Phaser.Scene,
@@ -34,24 +58,8 @@ function addStaticRect(
  */
 export function createWorldCollision(scene: Phaser.Scene): Phaser.Physics.Arcade.StaticGroup {
   const group = scene.physics.add.staticGroup();
-
-  for (const rect of computeWallRects()) {
+  for (const rect of staticSolidRects()) {
     addStaticRect(scene, group, rect.x, rect.y, rect.w, rect.h);
   }
-
-  for (const room of ROOMS) {
-    for (const piece of room.furniture) {
-      if (piece.solid === false) continue;
-      addStaticRect(
-        scene,
-        group,
-        px(room.tiles.x) + px(piece.x),
-        px(room.tiles.y) + px(piece.y),
-        px(piece.w),
-        px(piece.h),
-      );
-    }
-  }
-
   return group;
 }

@@ -691,6 +691,16 @@ export class FurnitureEditor {
     return result;
   }
 
+  /** id/x/y of every placed item — used once at scene boot to match each click-to-navigate INTERACTABLE to its nearest real furniture instance (see game/interactions/ClickNavigation.ts). */
+  itemPositions(): { id: string; x: number; y: number }[] {
+    return [...this.items.values()].map((item) => ({ id: item.id, x: item.x, y: item.y }));
+  }
+
+  /** The rendered image for a placed item — click-to-navigate attaches its click handler directly to this (already-interactive, see spawn()) sprite instead of hit-testing the floor footprint, so a click anywhere on the visible art registers, not just the thin sliver where the art happens to sit over its own floor footprint. */
+  itemImage(id: string): Phaser.GameObjects.Image | undefined {
+    return this.items.get(id)?.image;
+  }
+
   /**
    * Render order for one placed piece, from the CENTRE OF ITS COLLISION
    * FOOTPRINT rather than from item.x/item.y.

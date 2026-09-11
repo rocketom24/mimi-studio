@@ -7,15 +7,18 @@ import { createHouseFloor } from "@/game/world/floorSystem";
 import { createWalls, createWindows, type WallSegment } from "@/game/world/wallSystem";
 import { createDoors, updateDoors, type DoorSegment } from "@/game/world/doorSystem";
 import { createFurniture, preloadFurnitureSprites } from "@/game/world/furnitureSystem";
-import { createWorldCollision } from "@/game/world/collision";
+import { createWorldCollision, staticSolidRects } from "@/game/world/collision";
 import { FurnitureEditor, preloadFurnitureEditorData } from "@/game/world/furnitureEditor";
 import { FURNITURE_ASSET_FILES_REGISTRY_KEY, preloadEditorFurnitureSprites } from "@/game/world/furnitureEditorAssets";
-import { Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, preloadPlayerSprite } from "@/game/entities/Player";
+import { BODY_FOOTPRINT_PX, Player, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, preloadPlayerSprite } from "@/game/entities/Player";
 import { KeyboardInput } from "@/game/input/KeyboardInput";
 import { TouchInput } from "@/game/input/TouchInput";
 import { CombinedInput } from "@/game/input/CombinedInput";
+import type { InputSource } from "@/game/types/input";
 import { InteractionSystem, INTERACTION_EVENTS } from "@/game/interactions/InteractionSystem";
 import { InteractionPrompt } from "@/game/interactions/InteractionPrompt";
+import { ClickNavigation } from "@/game/interactions/ClickNavigation";
+import { buildPathGrid } from "@/game/navigation/pathGrid";
 import { INTERACTABLES } from "@/game/data/interactables";
 import { GAME_EVENTS, SCENE_EVENTS } from "@/game/types/interaction";
 import type { Interactable } from "@/game/types/interaction";
@@ -57,6 +60,9 @@ export class StudioScene extends Phaser.Scene {
   readonly touchInput = new TouchInput();
   private interactionSystem!: InteractionSystem;
   private interactionPrompt!: InteractionPrompt;
+  private clickNavigation!: ClickNavigation;
+  /** Keyboard+touch only, excluding ClickNavigation — checked every frame to know when a real key press should cancel an in-progress click-navigated walk. */
+  private manualInput!: InputSource;
   /** Furniture placement overlay — see game/world/furnitureEditor.ts. Always spawns its saved/default layout; editing itself stays dev-only (gated in GameCanvas.tsx). Its items' footprints are resolved against Mimi every frame in update() (see Player.ts/collisionShapes.ts), not baked into createWorldCollision(). */
   furnitureEditor!: FurnitureEditor;
   private inputLocked = false;
@@ -95,11 +101,25 @@ export class StudioScene extends Phaser.Scene {
 
     this.physics.world.setBounds(0, 0, WORLD_PIXEL_WIDTH, WORLD_PIXEL_HEIGHT);
 
-    const input = new CombinedInput([new KeyboardInput(this), this.touchInput]);
-    this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, input);
-
     this.furnitureEditor = new FurnitureEditor(this);
     this.furnitureEditor.load();
+
+    const pathGrid = buildPathGrid(staticSolidRects(), this.furnitureEditor.footprintPolygons().map((f) => f.points), BODY_FOOTPRINT_PX / 2);
+    this.clickNavigation = new ClickNavigation(pathGrid, this.furnitureEditor, INTERACTABLES);
+    // Wire a click listener directly onto each matched furniture image's own
+    // sprite (already interactive — see FurnitureEditor.spawn) instead of
+    // hit-testing the floor footprint: the footprint is a thin floor-level
+    // slice that sits nowhere near where a user actually clicks on tall
+    // furniture (a bookshelf, a PC desk, a wardrobe), which read as "clicking
+    // does nothing" for exactly those pieces. The sprite's own bounds are
+    // what the player actually sees and clicks.
+    for (const [itemId, interactable] of this.clickNavigation.matchedItems) {
+      const image = this.furnitureEditor.itemImage(itemId);
+      image?.on("pointerdown", () => this.handleFurnitureImageClick(interactable));
+    }
+
+    this.manualInput = new CombinedInput([new KeyboardInput(this), this.touchInput]);
+    this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, new CombinedInput([this.manualInput, this.clickNavigation]));
 
     const collisionGroup = createWorldCollision(this);
     this.physics.add.collider(this.player.sprite, collisionGroup);
@@ -148,6 +168,16 @@ export class StudioScene extends Phaser.Scene {
     const footprints = this.furnitureEditor.footprintPolygons();
 
     if (this.inputLocked || this.furnitureEditingActive) return;
+
+    // A real key press overrides an in-progress click-navigated walk
+    // immediately (see ClickNavigation's doc comment); otherwise let it
+    // compute this frame's intent toward the current waypoint.
+    const manualIntent = this.manualInput.getIntent();
+    if (manualIntent.up || manualIntent.down || manualIntent.left || manualIntent.right) {
+      this.clickNavigation.cancel();
+    } else {
+      this.clickNavigation.update(this.player.worldX, this.player.worldY);
+    }
 
     this.player.update(delta, footprints.map((f) => f.points));
     // Mimi's own render order can't come from her position alone — see
@@ -352,6 +382,17 @@ export class StudioScene extends Phaser.Scene {
 
   private handlePanPointerUp(): void {
     if (this.panActive) this.stopPan();
+  }
+
+  /**
+   * A matched furniture image's own click (see the per-image listeners set
+   * up in create()) starts Mimi walking there — see ClickNavigation. Shares
+   * the same lock/editor guards handlePanPointerDown uses; Space being down
+   * means this click is really starting a pan, not a furniture click.
+   */
+  private handleFurnitureImageClick(interactable: Interactable): void {
+    if (this.spaceKey.isDown || this.inputLocked || this.furnitureEditingActive) return;
+    this.clickNavigation.navigateTo(interactable, this.player.worldX, this.player.worldY);
   }
 
   /**

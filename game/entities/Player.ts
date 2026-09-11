@@ -59,7 +59,7 @@ const RENDERED_STANDING_HEIGHT = 225 * (PLAYER_HEIGHT / 232);
 //
 // 10px is ~0.6 tile, comfortably narrower than the 2-tile (32px) doorways
 // and close to how wide she reads on the floor.
-const BODY_FOOTPRINT_PX = 10;
+export const BODY_FOOTPRINT_PX = 10;
 
 // Entrance floor (world tiles x8-13, y14-19), near the front door.
 export const PLAYER_SPAWN_TILE_X = 10;
@@ -67,7 +67,7 @@ export const PLAYER_SPAWN_TILE_Y = 18;
 export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 
-const PLAYER_SPEED = 65; // logical px/sec
+const PLAYER_SPEED = 85; // logical px/sec
 
 // Velocity eases toward its target instead of snapping, so starts/stops carry
 // a little weight. Rates are 1/sec exponential-approach constants (see
