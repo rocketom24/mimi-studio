@@ -23,6 +23,11 @@ export function createGameConfig(
     pixelArt: false,
     antialias: true,
     backgroundColor: "#4d3627",
+    input: {
+      // Phaser tracks a single touch pointer by default, so a second finger is
+      // never reported — StudioScene's pinch-to-zoom needs two of them.
+      activePointers: 3,
+    },
     physics: {
       default: "arcade",
       arcade: {

@@ -34,6 +34,15 @@ import type { Interactable } from "@/game/types/interaction";
 // still free since computeCameraBounds clamps bounds back to the house's
 // exact extent once the viewport is smaller than it.
 const FILL_FACTOR = 0.8;
+// On a phone the fitted zoom is pinned by the SHORT axis (a 390px-wide
+// portrait screen against a wide isometric house), so the usual 20% breathing
+// room costs a fifth of an already tiny screen and leaves the house floating
+// in a sea of background. Phone-sized viewports keep only a hairline of
+// padding instead. Thresholds mirror useIsTouchDevice's COMPACT_QUERY so the
+// camera and the HUD switch to their compact treatment together.
+const COMPACT_FILL_FACTOR = 0.98;
+const COMPACT_MAX_WIDTH = 640;
+const COMPACT_MAX_HEIGHT = 520;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 2.5;
 const ZOOM_STEP = 0.1;
@@ -55,6 +64,13 @@ const ZOOM_SNAP_EPSILON = 0.001;
 // this margin (projected px) on every side instead, purely so there's
 // somewhere to drag to; stopPan() restores the normal fitted bounds.
 const PAN_BOUNDS_MARGIN = 600;
+// There's no Space key to hold on a phone, so a plain one-finger drag pans the
+// camera there instead — but a tap has to keep reaching the furniture under
+// it. The gesture only becomes a pan once the finger has travelled this far
+// (screen px) from where it went down; anything shorter is still a tap.
+const TOUCH_PAN_SLOP_PX = 8;
+/** Ignore sub-pixel pinch jitter, which would otherwise drift the zoom while two fingers rest still on the screen. */
+const PINCH_MIN_DISTANCE_PX = 1;
 
 export class StudioScene extends Phaser.Scene {
   player!: Player;
@@ -86,6 +102,12 @@ export class StudioScene extends Phaser.Scene {
   private panLast: { x: number; y: number } | null = null;
   /** True from the moment a pan starts until the player next actually moves — see update()'s follow-resume check and stopPan's comment for why this isn't cleared by stopPan itself. */
   private followSuspended = false;
+  /** Down position of a one-finger touch gesture not yet classified as tap or pan — see TOUCH_PAN_SLOP_PX. Null on desktop, which uses Space+drag instead. */
+  private touchPanStart: { x: number; y: number } | null = null;
+  /** True while two fingers are down driving a pinch-zoom — suppresses one-finger panning and furniture taps until the second finger lifts. */
+  private pinchActive = false;
+  /** Screen distance between the two pinch fingers as of the previous pointermove. */
+  private pinchLastDistance = 0;
 
   constructor() {
     super("StudioScene");
@@ -119,7 +141,17 @@ export class StudioScene extends Phaser.Scene {
     // what the player actually sees and clicks.
     for (const [itemId, interactable] of this.clickNavigation.matchedItems) {
       const image = this.furnitureEditor.itemImage(itemId);
-      image?.on("pointerdown", () => {
+      image?.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+        // Touch is resolved on release instead (below): on a phone the same
+        // finger-down also starts a camera drag/pinch, so acting immediately
+        // would send Mimi walking every time the viewer panned off a sofa.
+        if (pointer.wasTouch) return;
+        this.pulseFurnitureClick(image);
+        this.handleFurnitureImageClick(interactable);
+      });
+      image?.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+        if (!pointer.wasTouch || this.panActive || this.pinchActive) return;
+        if (pointer.getDistance() > TOUCH_PAN_SLOP_PX) return;
         this.pulseFurnitureClick(image);
         this.handleFurnitureImageClick(interactable);
       });
@@ -296,7 +328,9 @@ export class StudioScene extends Phaser.Scene {
   /** Zoom level at which the house's whole projected extent fits inside FILL_FACTOR of the current viewport — the baseline user zoom (zoomFactor=1) multiplies against. Recomputed every call instead of cached since the viewport size changes continuously with the window. */
   private computeFitZoom(): number {
     const size = projectedSize();
-    return Math.min(this.scale.width / size.width, this.scale.height / size.height) * FILL_FACTOR;
+    const compact = this.scale.width <= COMPACT_MAX_WIDTH || this.scale.height <= COMPACT_MAX_HEIGHT;
+    const fill = compact ? COMPACT_FILL_FACTOR : FILL_FACTOR;
+    return Math.min(this.scale.width / size.width, this.scale.height / size.height) * fill;
   }
 
   /**
@@ -373,7 +407,76 @@ export class StudioScene extends Phaser.Scene {
   }
 
   private handlePanPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (pointer.wasTouch) {
+      this.handleTouchPointerDown(pointer);
+      return;
+    }
     if (!this.spaceKey.isDown || !pointer.leftButtonDown() || !this.isPointerFromCanvas(pointer)) return;
+    this.beginPan(pointer);
+  }
+
+  private handlePanPointerMove(pointer: Phaser.Input.Pointer): void {
+    if (pointer.wasTouch) {
+      this.handleTouchPointerMove(pointer);
+      return;
+    }
+    this.applyPanDelta(pointer);
+  }
+
+  private handlePanPointerUp(pointer: Phaser.Input.Pointer): void {
+    if (this.panActive) this.stopPan();
+    if (!pointer.wasTouch) return;
+    this.touchPanStart = null;
+    // Only drop out of pinch mode once the second finger is actually gone —
+    // otherwise lifting one of two fingers would immediately hand the
+    // remaining one a fresh pan mid-gesture.
+    if (this.activeTouchPointers().length < 2) {
+      this.pinchActive = false;
+      this.pinchLastDistance = 0;
+    }
+  }
+
+  /** Every touch pointer currently held down. Phaser's InputManager owns the pointer pool (see gameConfig's input.activePointers); the scene's InputPlugin only exposes the active one. */
+  private activeTouchPointers(): Phaser.Input.Pointer[] {
+    return this.input.manager.pointers.filter((pointer) => pointer.isDown && pointer.wasTouch);
+  }
+
+  /**
+   * Touch has no modifier key to arm panning with, so classification is
+   * positional: a second finger means pinch-zoom, and a single finger stays
+   * ambiguous (tap or pan) until it passes TOUCH_PAN_SLOP_PX in
+   * handleTouchPointerMove. Nothing is committed here.
+   */
+  private handleTouchPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (this.inputLocked || this.furnitureEditingActive || !this.isPointerFromCanvas(pointer)) return;
+    const touches = this.activeTouchPointers();
+    if (touches.length >= 2) {
+      this.beginPinch(touches[0], touches[1]);
+      return;
+    }
+    this.touchPanStart = { x: pointer.x, y: pointer.y };
+  }
+
+  private handleTouchPointerMove(pointer: Phaser.Input.Pointer): void {
+    const touches = this.activeTouchPointers();
+    if (touches.length >= 2) {
+      if (!this.pinchActive) this.beginPinch(touches[0], touches[1]);
+      this.updatePinch(touches[0], touches[1]);
+      return;
+    }
+    // A finger left over from a finished pinch must not start panning — it
+    // never had a down position recorded for it, and the user is still just
+    // letting go of a zoom gesture.
+    if (this.pinchActive || !this.touchPanStart) return;
+    if (!this.panActive) {
+      if (Phaser.Math.Distance.Between(pointer.x, pointer.y, this.touchPanStart.x, this.touchPanStart.y) < TOUCH_PAN_SLOP_PX) return;
+      this.beginPan(pointer);
+    }
+    this.applyPanDelta(pointer);
+  }
+
+  /** Shared by Space+drag (desktop) and a one-finger touch drag — see PAN_BOUNDS_MARGIN for why bounds are widened. */
+  private beginPan(pointer: Phaser.Input.Pointer): void {
     this.panActive = true;
     this.panLast = { x: pointer.x, y: pointer.y };
     this.followSuspended = true;
@@ -385,7 +488,7 @@ export class StudioScene extends Phaser.Scene {
     this.cameras.main.setBounds(-PAN_BOUNDS_MARGIN, -PAN_BOUNDS_MARGIN, size.width + PAN_BOUNDS_MARGIN * 2, size.height + PAN_BOUNDS_MARGIN * 2);
   }
 
-  private handlePanPointerMove(pointer: Phaser.Input.Pointer): void {
+  private applyPanDelta(pointer: Phaser.Input.Pointer): void {
     if (!this.panActive || !this.panLast) return;
     const zoom = this.cameras.main.zoom;
     this.cameras.main.scrollX -= (pointer.x - this.panLast.x) / zoom;
@@ -393,8 +496,34 @@ export class StudioScene extends Phaser.Scene {
     this.panLast = { x: pointer.x, y: pointer.y };
   }
 
-  private handlePanPointerUp(): void {
+  private beginPinch(first: Phaser.Input.Pointer, second: Phaser.Input.Pointer): void {
+    this.pinchActive = true;
+    this.pinchLastDistance = Phaser.Math.Distance.Between(first.x, first.y, second.x, second.y);
+    this.touchPanStart = null;
     if (this.panActive) this.stopPan();
+  }
+
+  /**
+   * Zoom follows the ratio the fingers' separation changed by, so the world
+   * tracks the pinch 1:1 instead of stepping — and it's applied straight to
+   * zoomFactor rather than to targetZoomFactor alone, because a pinch is a
+   * continuous direct manipulation: routing it through ZOOM_SMOOTHING (which
+   * exists to absorb discrete wheel/key bursts) would just make it feel like
+   * the screen was lagging behind the fingers.
+   */
+  private updatePinch(first: Phaser.Input.Pointer, second: Phaser.Input.Pointer): void {
+    const distance = Phaser.Math.Distance.Between(first.x, first.y, second.x, second.y);
+    if (distance < PINCH_MIN_DISTANCE_PX || this.pinchLastDistance < PINCH_MIN_DISTANCE_PX) {
+      this.pinchLastDistance = distance;
+      return;
+    }
+    const next = Phaser.Math.Clamp(this.zoomFactor * (distance / this.pinchLastDistance), ZOOM_MIN, ZOOM_MAX);
+    this.pinchLastDistance = distance;
+    if (next === this.zoomFactor) return;
+    this.zoomFactor = next;
+    this.targetZoomFactor = next;
+    this.applyCameraFraming();
+    this.events.emit(SCENE_EVENTS.ZoomChange, this.zoomFactor);
   }
 
   /**

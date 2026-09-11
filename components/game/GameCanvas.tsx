@@ -10,7 +10,7 @@ import type { PortfolioSectionId } from "@/game/data/portfolio";
 import PortfolioPanel from "@/components/game/PortfolioPanel";
 import TouchControls from "@/components/game/TouchControls";
 import StudioHud from "@/components/game/StudioHud";
-import { useIsTouchDevice } from "@/lib/useIsTouchDevice";
+import { useIsCompactViewport, useIsTouchDevice } from "@/lib/useIsTouchDevice";
 import { FURNITURE_ASSET_FILES_REGISTRY_KEY } from "@/game/world/furnitureEditorAssets";
 
 interface GameCanvasProps {
@@ -27,6 +27,21 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
   const [zoomFactor, setZoomFactor] = useState(1);
   const [hasStartedMoving, setHasStartedMoving] = useState(false);
   const isTouchDevice = useIsTouchDevice();
+  const isCompact = useIsCompactViewport();
+
+  // iOS Safari ignores `user-scalable=no` (see app/layout.tsx's viewport
+  // export), so a two-finger pinch would zoom the whole PAGE on top of the
+  // game's own pinch-zoom. Its proprietary gesture events are the only hook
+  // that stops it; other browsers never fire them, so this is inert there.
+  useEffect(() => {
+    const block = (e: Event) => e.preventDefault();
+    document.addEventListener("gesturestart", block, { passive: false });
+    document.addEventListener("gesturechange", block, { passive: false });
+    return () => {
+      document.removeEventListener("gesturestart", block);
+      document.removeEventListener("gesturechange", block);
+    };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current || gameRef.current) return;
@@ -101,13 +116,19 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
       <div className="relative h-full flex-1 overflow-hidden">
         <div ref={containerRef} className="h-full w-full" />
       </div>
-      <StudioHud zoomFactor={zoomFactor} isTouchDevice={isTouchDevice} hasStartedMoving={hasStartedMoving} />
+      <StudioHud
+        zoomFactor={zoomFactor}
+        isTouchDevice={isTouchDevice}
+        compact={isCompact}
+        hasStartedMoving={hasStartedMoving}
+      />
       {isTouchDevice && (
         <TouchControls
           onDirection={handleDirection}
           onInteract={handleInteract}
           canInteract={canInteract}
           disabled={panelId !== null}
+          zoomFactor={zoomFactor}
         />
       )}
       <PortfolioPanel sectionId={panelId} onClose={handleClose} />

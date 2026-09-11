@@ -1,20 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { hudFadeOpacity } from "@/lib/hudFade";
 
 interface StudioHudProps {
   /** From StudioScene's SCENE_EVENTS.ZoomChange — 1 (fitted) to 2.5 (max zoom in). */
   zoomFactor: number;
   isTouchDevice: boolean;
+  /** Phone-sized viewport (see useIsCompactViewport) — switches the HUD to its small, collapsible layout. */
+  compact: boolean;
   /** True once the player has walked, tapped a D-pad button, clicked furniture, or pressed Interact. */
   hasStartedMoving: boolean;
 }
 
-// Matches StudioScene's ZOOM_MIN/ZOOM_MAX (1..2.5) — non-essential HUD panels
-// fade out over this range so they never sit on top of furniture once the
-// player has zoomed in close to look at it.
-const FADE_START = 1.5;
-const FADE_END = 2.2;
+/** Below this opacity a faded panel also stops taking taps, so an invisible guide panel can never swallow a touch meant for the game. */
+const INTERACTIVE_OPACITY = 0.2;
 
 // Warm, neutral cozy tone — deliberately not the game world's purple
 // (plumDark/purple in theme.tsx) so the HUD reads as its own premium layer.
@@ -44,50 +44,113 @@ const DPAD_HINT_CELLS: { glyph: string; cell: string }[] = [
   { glyph: "▼", cell: "col-start-2 row-start-3" },
 ];
 
-export default function StudioHud({ zoomFactor, isTouchDevice, hasStartedMoving }: StudioHudProps) {
+/**
+ * The logo avatar is one frame cropped out of the walk sheet by background
+ * sizing, so every dimension has to scale together with the element — sizing
+ * the box alone would just show a different (wrong) part of the sheet.
+ * Authored against a 36px box; SHEET/OFFSET are that reference.
+ */
+const AVATAR_REF_PX = 36;
+const AVATAR_SHEET = { width: 403.2, height: 230.4, offsetX: -15.6 };
+
+function LogoAvatar({ size }: { size: number }) {
+  const scale = size / AVATAR_REF_PX;
+  return (
+    <div
+      className="shrink-0 rounded-full border border-[#ffe9a8]/60 bg-[#1a1423]"
+      style={{
+        height: size,
+        width: size,
+        backgroundImage: "url(/assets/game/character/mimi-sheet-1.png)",
+        backgroundSize: `${AVATAR_SHEET.width * scale}px ${AVATAR_SHEET.height * scale}px`,
+        backgroundPosition: `${AVATAR_SHEET.offsetX * scale}px 0px`,
+      }}
+    />
+  );
+}
+
+export default function StudioHud({ zoomFactor, isTouchDevice, compact, hasStartedMoving }: StudioHudProps) {
   const [toastTimedOut, setToastTimedOut] = useState(false);
+  // Compact viewports open the guide only on demand — left expanded it would
+  // cover roughly a third of a phone screen, which is the "HUD covers
+  // everything" problem. Desktop keeps the always-open panel it had.
+  const [guideOpen, setGuideOpen] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setToastTimedOut(true), 8000);
     return () => window.clearTimeout(timer);
   }, []);
 
-  const fadeAmount = Math.min(1, Math.max(0, (zoomFactor - FADE_START) / (FADE_END - FADE_START)));
-  const fadeOpacity = 1 - fadeAmount;
+  // Floor 0: these panels are informational, so unlike the touch controls
+  // (see TouchControls' CONTROLS_MIN_OPACITY) they may fade away entirely.
+  const fadeOpacity = hudFadeOpacity(zoomFactor);
   const toastVisible = !hasStartedMoving && !toastTimedOut;
   const toastOpacity = toastVisible ? fadeOpacity : 0;
+  const guideInteractive = fadeOpacity > INTERACTIVE_OPACITY;
 
   return (
     <div className="pointer-events-none absolute inset-0 z-30 select-none">
       {/* Top-left: always-visible logo */}
-      <div className={`absolute left-3 top-3 flex items-center gap-2 px-2 py-1.5 ${PANEL_STYLE}`}>
-        <div
-          className="h-9 w-9 shrink-0 rounded-full border border-[#ffe9a8]/60 bg-[#1a1423]"
-          style={{
-            backgroundImage: "url(/assets/game/character/mimi-sheet-1.png)",
-            backgroundSize: "403.2px 230.4px",
-            backgroundPosition: "-15.6px 0px",
-          }}
-        />
-        <span className="text-xs font-bold tracking-wide text-[#ffe9a8]">Mimi Studio</span>
+      <div
+        className={`absolute left-2 top-2 flex items-center gap-1.5 px-1.5 py-1 sm:left-3 sm:top-3 sm:gap-2 sm:px-2 sm:py-1.5 ${PANEL_STYLE}`}
+        style={{
+          marginLeft: "env(safe-area-inset-left)",
+          marginTop: "env(safe-area-inset-top)",
+        }}
+      >
+        <LogoAvatar size={compact ? 22 : 36} />
+        <span className={`font-bold tracking-wide text-[#ffe9a8] ${compact ? "text-[10px]" : "text-xs"}`}>Mimi Studio</span>
       </div>
 
-      {/* Top-right: studio guide, fades on zoom-in */}
+      {/* Top-right: studio guide. Always open on desktop; a tap-to-open
+          disclosure on phone-sized screens. Fades (and stops taking taps) on
+          zoom-in either way. */}
       <div
-        className={`absolute right-3 top-3 w-56 px-3 py-2 text-[10px] leading-relaxed transition-opacity duration-300 ${PANEL_STYLE}`}
-        style={{ opacity: fadeOpacity }}
+        className="absolute right-2 top-2 flex flex-col items-end gap-1 transition-opacity duration-300 sm:right-3 sm:top-3"
+        style={{
+          opacity: fadeOpacity,
+          pointerEvents: guideInteractive ? "auto" : "none",
+          marginRight: "env(safe-area-inset-right)",
+          marginTop: "env(safe-area-inset-top)",
+        }}
       >
-        <div className="mb-1 font-bold text-[#ffe9a8]">Studio Guide</div>
-        {GUIDE_ENTRIES.map(([furniture, section]) => (
-          <div key={furniture} className="flex justify-between gap-2">
-            <span className="text-[#f0ead6]/70">{furniture}</span>
-            <span className="text-right text-[#f0ead6]">{section}</span>
+        {compact ? (
+          <>
+            <button
+              type="button"
+              aria-expanded={guideOpen}
+              aria-label="Studio guide"
+              onClick={() => setGuideOpen((open) => !open)}
+              className={`flex h-7 items-center gap-1 px-2 text-[10px] font-bold text-[#ffe9a8] ${PANEL_STYLE}`}
+            >
+              Guide<span className="text-[8px] leading-none">{guideOpen ? "▲" : "▼"}</span>
+            </button>
+            {guideOpen && (
+              <div className={`max-h-[45dvh] w-44 overflow-y-auto overscroll-contain px-2 py-1.5 text-[9px] leading-snug ${PANEL_STYLE}`}>
+                {GUIDE_ENTRIES.map(([furniture, section]) => (
+                  <div key={furniture} className="flex justify-between gap-2">
+                    <span className="text-[#f0ead6]/70">{furniture}</span>
+                    <span className="text-right text-[#f0ead6]">{section}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className={`w-56 px-3 py-2 text-[10px] leading-relaxed ${PANEL_STYLE}`}>
+            <div className="mb-1 font-bold text-[#ffe9a8]">Studio Guide</div>
+            {GUIDE_ENTRIES.map(([furniture, section]) => (
+              <div key={furniture} className="flex justify-between gap-2">
+                <span className="text-[#f0ead6]/70">{furniture}</span>
+                <span className="text-right text-[#f0ead6]">{section}</span>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
 
       {/* Bottom-left: controls hint, desktop only, fades on zoom-in */}
-      {!isTouchDevice && (
+      {!isTouchDevice && !compact && (
         <div
           className={`absolute bottom-3 left-3 flex flex-col gap-2 px-3 py-2 text-[10px] ${PANEL_STYLE} transition-opacity duration-300`}
           style={{ opacity: fadeOpacity }}
@@ -121,13 +184,22 @@ export default function StudioHud({ zoomFactor, isTouchDevice, hasStartedMoving 
       {/* First-visit hint — pinned to the bottom edge (below the house
           artwork) so it never covers the scene. Narrower than the D-pad/
           Interact gap so it doesn't overlap them, and fades out both on
-          zoom-in and as soon as the player starts moving. */}
+          zoom-in and as soon as the player starts moving. On compact
+          viewports it moves under the logo instead: the bottom edge there
+          belongs to the D-pad and the Interact button. */}
       <div
-        className={`absolute bottom-1 left-1/2 w-[min(70vw,260px)] -translate-x-1/2 px-3 py-1.5 text-center text-[10px] transition-opacity duration-500 ${PANEL_STYLE}`}
+        className={`absolute left-1/2 -translate-x-1/2 text-center transition-opacity duration-500 ${PANEL_STYLE} ${
+          compact
+            ? // Portrait: under the logo row, clear of the D-pad. Landscape (short):
+              // back to the bottom edge — the top strip there sits right on top of
+              // the house, and the bottom centre is free between D-pad and Interact.
+              "top-12 w-[min(58vw,200px)] px-2 py-1 text-[9px] [@media(max-height:520px)]:top-auto [@media(max-height:520px)]:bottom-2"
+            : "bottom-1 w-[min(70vw,260px)] px-3 py-1.5 text-[10px]"
+        }`}
         style={{ opacity: toastOpacity }}
       >
         <span className="text-[#ffe9a8]">Explore Mimi Studio</span>
-        <span className="text-[#f0ead6]/70"> — walk around or click furniture</span>
+        <span className="text-[#f0ead6]/70">{compact ? " — walk or tap furniture" : " — walk around or click furniture"}</span>
       </div>
     </div>
   );

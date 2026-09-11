@@ -24,3 +24,25 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Touch hygiene — the whole app is one full-screen game, so none of the
+   browser's own gesture defaults are wanted anywhere on it. */
+html,
+body {
+  overscroll-behavior: none;
+  /* Kills the 300ms double-tap-to-zoom delay without disabling panning inside
+     the portfolio panel (which `touch-action: none` here would). */
+  touch-action: manipulation;
+}
+
+/* The game canvas owns every gesture over it: one-finger drag pans the camera
+   and two fingers pinch-zoom (StudioScene), so the browser must not also
+   scroll or zoom the page from the same touches. */
+canvas {
+  touch-action: none;
+  display: block;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
