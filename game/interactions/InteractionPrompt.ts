@@ -50,14 +50,40 @@ export class InteractionPrompt {
   private handlePromptChange(interactable: Interactable | null): void {
     this.current = interactable;
     if (!interactable) {
-      this.text.setVisible(false);
-      this.border.setVisible(false);
+      this.animateHide();
       return;
     }
     this.text.setText(`E — ${SECTION_TITLES[interactable.panelId]}`);
+    this.reposition();
+    this.animateShow();
+  }
+
+  /** Pops the prompt in — scale + fade from Mimi's head point (text's own origin, see the constructor). The border tracks the text's live (scaling) bounds every frame via reposition()/drawBorder(), so it only needs its own alpha tweened to match. */
+  private animateShow(): void {
     this.text.setVisible(true);
     this.border.setVisible(true);
-    this.reposition();
+    this.scene.tweens.killTweensOf([this.text, this.border]);
+    this.text.setScale(0.85).setAlpha(0);
+    this.border.setAlpha(0);
+    this.scene.tweens.add({ targets: this.text, scale: 1, alpha: 1, duration: 160, ease: "Back.easeOut" });
+    this.scene.tweens.add({ targets: this.border, alpha: 1, duration: 160 });
+  }
+
+  /** Mirrors animateShow on the way out, hiding both objects only once the fade actually finishes. */
+  private animateHide(): void {
+    this.scene.tweens.killTweensOf([this.text, this.border]);
+    this.scene.tweens.add({
+      targets: this.text,
+      scale: 0.85,
+      alpha: 0,
+      duration: 120,
+      ease: "Quad.easeIn",
+      onComplete: () => {
+        this.text.setVisible(false);
+        this.border.setVisible(false);
+      },
+    });
+    this.scene.tweens.add({ targets: this.border, alpha: 0, duration: 120 });
   }
 
   /** Anchor above Mimi's head, but slide inward so the panel never runs off the camera edge. */

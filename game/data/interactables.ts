@@ -1,6 +1,9 @@
 import type { Interactable } from "@/game/types/interaction";
 
-const INTERACTION_RADIUS = 14;
+// 1.5 tiles (TILE_SIZE=16px) — comfortable approach radius, not a pixel-hunt.
+// Closest cross-panel interactables sit 82px apart (pc/bookshelf), so this
+// stays well clear of triggering the wrong furniture's prompt.
+const INTERACTION_RADIUS = 24;
 
 /**
  * Every interactable object in the studio, one entry per real furniture

@@ -55,6 +55,7 @@ export default function StudioHud({ zoomFactor, isTouchDevice, hasStartedMoving 
   const fadeAmount = Math.min(1, Math.max(0, (zoomFactor - FADE_START) / (FADE_END - FADE_START)));
   const fadeOpacity = 1 - fadeAmount;
   const toastVisible = !hasStartedMoving && !toastTimedOut;
+  const toastOpacity = toastVisible ? fadeOpacity : 0;
 
   return (
     <div className="pointer-events-none absolute inset-0 z-30 select-none">
@@ -117,12 +118,13 @@ export default function StudioHud({ zoomFactor, isTouchDevice, hasStartedMoving 
         </div>
       )}
 
-      {/* First-visit hint — parked well above the bottom-left/bottom-right
-          panels (Controls, and the touch D-pad + Interact button) so it never
-          overlaps them regardless of viewport width. */}
+      {/* First-visit hint — pinned to the bottom edge (below the house
+          artwork) so it never covers the scene. Narrower than the D-pad/
+          Interact gap so it doesn't overlap them, and fades out both on
+          zoom-in and as soon as the player starts moving. */}
       <div
-        className={`absolute bottom-52 left-1/2 w-[min(85vw,280px)] -translate-x-1/2 px-3 py-1.5 text-center text-[10px] transition-opacity duration-500 ${PANEL_STYLE}`}
-        style={{ opacity: toastVisible ? 1 : 0 }}
+        className={`absolute bottom-1 left-1/2 w-[min(70vw,260px)] -translate-x-1/2 px-3 py-1.5 text-center text-[10px] transition-opacity duration-500 ${PANEL_STYLE}`}
+        style={{ opacity: toastOpacity }}
       >
         <span className="text-[#ffe9a8]">Explore Mimi Studio</span>
         <span className="text-[#f0ead6]/70"> — walk around or click furniture</span>

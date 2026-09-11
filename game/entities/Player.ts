@@ -61,9 +61,11 @@ const RENDERED_STANDING_HEIGHT = 225 * (PLAYER_HEIGHT / 232);
 // and close to how wide she reads on the floor.
 export const BODY_FOOTPRINT_PX = 10;
 
-// Entrance floor (world tiles x8-13, y14-19), near the front door.
-export const PLAYER_SPAWN_TILE_X = 10;
-export const PLAYER_SPAWN_TILE_Y = 18;
+// Living room floor (world tiles x1-13, y1-12), clear of all furniture —
+// was the entrance tile at the front door, which hid Mimi behind its leaf
+// on load. This tile sits ~38px from the nearest piece (the dining table).
+export const PLAYER_SPAWN_TILE_X = 7;
+export const PLAYER_SPAWN_TILE_Y = 6;
 export const PLAYER_SPAWN_X = PLAYER_SPAWN_TILE_X * TILE_SIZE + TILE_SIZE / 2;
 export const PLAYER_SPAWN_Y = (PLAYER_SPAWN_TILE_Y + 1) * TILE_SIZE;
 

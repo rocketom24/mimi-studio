@@ -17,6 +17,8 @@ import { CombinedInput } from "@/game/input/CombinedInput";
 import type { InputSource } from "@/game/types/input";
 import { InteractionSystem, INTERACTION_EVENTS } from "@/game/interactions/InteractionSystem";
 import { InteractionPrompt } from "@/game/interactions/InteractionPrompt";
+import { GreetingBubble } from "@/game/interactions/GreetingBubble";
+import { createAmbientLighting, resizeAmbientLighting } from "@/game/world/lighting";
 import { ClickNavigation } from "@/game/interactions/ClickNavigation";
 import { buildPathGrid } from "@/game/navigation/pathGrid";
 import { INTERACTABLES } from "@/game/data/interactables";
@@ -60,6 +62,8 @@ export class StudioScene extends Phaser.Scene {
   readonly touchInput = new TouchInput();
   private interactionSystem!: InteractionSystem;
   private interactionPrompt!: InteractionPrompt;
+  private greetingBubble!: GreetingBubble;
+  private ambientLighting!: Phaser.GameObjects.Graphics;
   private clickNavigation!: ClickNavigation;
   /** Keyboard+touch only, excluding ClickNavigation — checked every frame to know when a real key press should cancel an in-progress click-navigated walk. */
   private manualInput!: InputSource;
@@ -115,16 +119,21 @@ export class StudioScene extends Phaser.Scene {
     // what the player actually sees and clicks.
     for (const [itemId, interactable] of this.clickNavigation.matchedItems) {
       const image = this.furnitureEditor.itemImage(itemId);
-      image?.on("pointerdown", () => this.handleFurnitureImageClick(interactable));
+      image?.on("pointerdown", () => {
+        this.pulseFurnitureClick(image);
+        this.handleFurnitureImageClick(interactable);
+      });
     }
 
     this.manualInput = new CombinedInput([new KeyboardInput(this), this.touchInput]);
     this.player = new Player(this, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, new CombinedInput([this.manualInput, this.clickNavigation]));
+    this.greetingBubble = new GreetingBubble(this, this.player);
 
     const collisionGroup = createWorldCollision(this);
     this.physics.add.collider(this.player.sprite, collisionGroup);
 
     this.applyCameraFraming();
+    this.ambientLighting = createAmbientLighting(this);
     // roundPixels off: nothing here is pixel-art (see gameConfig's pixelArt:
     // false), so rounding the camera's scroll to whole pixels every frame was
     // only quantising otherwise-smooth sub-pixel motion into visible 1px
@@ -207,6 +216,7 @@ export class StudioScene extends Phaser.Scene {
     }
     this.interactionSystem.update(this.player.worldX, this.player.worldY);
     this.interactionPrompt.update();
+    this.greetingBubble.update();
     updateDoors(this, this.doorSegments, this.player.worldX, this.player.worldY);
   }
 
@@ -280,6 +290,7 @@ export class StudioScene extends Phaser.Scene {
   /** Called by Phaser's ScaleManager whenever the canvas is resized (window resize, container resize) — the game size is no longer a fixed constant, so every viewport-dependent calc has to redo itself here instead of once at create(). */
   private handleGameResize(): void {
     this.applyCameraFraming();
+    resizeAmbientLighting(this.ambientLighting, this.scale.width, this.scale.height);
   }
 
   /** Zoom level at which the house's whole projected extent fits inside FILL_FACTOR of the current viewport — the baseline user zoom (zoomFactor=1) multiplies against. Recomputed every call instead of cached since the viewport size changes continuously with the window. */
@@ -395,6 +406,21 @@ export class StudioScene extends Phaser.Scene {
   private handleFurnitureImageClick(interactable: Interactable): void {
     if (this.spaceKey.isDown || this.inputLocked || this.furnitureEditingActive) return;
     this.clickNavigation.navigateTo(interactable, this.player.worldX, this.player.worldY);
+  }
+
+  /** Tiny scale-up-and-back pulse so clicking a piece of furniture reads as registered, even before Mimi starts walking to it. Purely cosmetic — never touches the click/navigation logic above. */
+  private pulseFurnitureClick(image: Phaser.GameObjects.Image): void {
+    if (this.spaceKey.isDown || this.inputLocked || this.furnitureEditingActive) return;
+    const scaleX = image.scaleX;
+    const scaleY = image.scaleY;
+    this.tweens.add({
+      targets: image,
+      scaleX: scaleX * 1.06,
+      scaleY: scaleY * 1.06,
+      duration: 90,
+      yoyo: true,
+      ease: "Quad.easeOut",
+    });
   }
 
   /**

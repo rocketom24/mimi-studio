@@ -19,6 +19,7 @@ import {
   SiPostman,
   SiPrisma,
   SiReact,
+  SiSpring,
   SiStripe,
   SiSupabase,
   SiTailwindcss,
@@ -34,6 +35,7 @@ import {
   LuKeyRound,
   LuLayers,
   LuLayoutGrid,
+  LuLinkedin,
   LuMail,
   LuNetwork,
   LuPhone,
@@ -73,9 +75,10 @@ export const ABOUT_INTRO = {
   role: "Full Stack Developer",
   location: "Dhaka, Bangladesh",
   paragraphs: [
-    "Hi, I'm Tasmim — the person who built this little studio you're walking around in. By day (and most nights) I build production web apps end to end: database schema, backend logic, UI, deployment, all of it.",
-    "I like taking a project from an empty repo to something real people use — most recently a full restaurant operating system for a sushi place in Milan, handling everything from reservations to Stripe payments.",
-    "Outside of client work I build small personal projects just because I want them to exist, like an Urdu poetry writing app, and yes, this cozy game-portfolio too.",
+    "Hi, I'm Tasmim. Mimi, the one you're walking around as right now, is my stand-in for this tour. This whole apartment, the furniture, the code that makes it all move, I built it, so consider this your tour guide talking.",
+    "What I actually do all day is build full web apps by myself, start to finish. Database, backend, the screens you click on, getting it all live on the internet without anyone else's help. Right now that means running the entire ordering and kitchen system for a real sushi restaurant in Milan. Reservations, table orders, payments, the whole thing quietly working while people eat their sushi.",
+    "Before any of that I spent a stretch as an education consultant, helping students figure out where they were going and keeping every bit of paperwork in order. Turns out untangling a messy application process and untangling a messy codebase use the same part of my brain.",
+    "When I'm not building things for other people I'm building things purely because I want them to exist. An app for writing Urdu poetry. This entire game you're standing in right now, walls, furniture and all — even the Cat Room is modeled on my actual cats. Go poke around the rest of the room, every piece of furniture has a bit more of me tucked behind it.",
   ],
 } as const;
 
@@ -158,6 +161,7 @@ export const CONTACT_LINKS: readonly ContactEntry[] = [
   { label: "Email", value: "rocketom24@gmail.com", href: "mailto:rocketom24@gmail.com", icon: LuMail },
   { label: "Phone", value: "+880 1777 682337", href: "tel:+8801777682337", icon: LuPhone },
   { label: "GitHub", value: "github.com/rocketom24", href: "https://github.com/rocketom24", icon: SiGithub },
+  { label: "LinkedIn", value: "linkedin.com/in/tasmim2325", href: "https://bd.linkedin.com/in/tasmim2325", icon: LuLinkedin },
 ];
 
 // ---- Tech Stack ----
@@ -198,6 +202,7 @@ export const TECH_STACK: readonly TechCategory[] = [
     items: [
       { name: "Node.js", icon: SiNodedotjs },
       { name: "Express.js", icon: SiExpress },
+      { name: "Spring Boot", icon: SiSpring },
       { name: "REST APIs", icon: LuNetwork },
     ],
   },
@@ -277,6 +282,7 @@ export const PROJECTS: readonly ProjectEntry[] = [
     ],
     tech: [
       { name: "Java", icon: SiOpenjdk },
+      { name: "Android Studio", icon: SiAndroidstudio },
       { name: "Firebase", icon: SiFirebase },
     ],
   },

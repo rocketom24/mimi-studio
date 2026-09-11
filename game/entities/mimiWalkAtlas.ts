@@ -15,7 +15,7 @@ export type AtlasDirection = keyof typeof ATLAS_ROW;
 export const MIMI_WALK_ATLAS = {
   key: "mimi-walk",
   path: "/assets/game/character/mimi-walk.png",
-  frameWidth: 156,
+  frameWidth: 124,
   frameHeight: 231,
   columns: 3,
   /**

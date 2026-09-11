@@ -66,7 +66,26 @@ const REFERENCE_STANDING = SHEETS.s3.standing;
  * visible on the right in one, the left in the other) while the yaw matches.
  */
 const DIRECTIONS = [
-  { name: "s",  poses: [["s4", 1, 2], ["s4", 2, 2], ["s4", 1, 5]] },
+  // South is the one direction with no authored walk cycle: measured over
+  // every front-facing cell, the only ones with real leg separation are the
+  // row 2-3 crouches and lunges, which normalise to 184-202px against the
+  // upright 219-223 and lean the torso up to 28px off the anchor. Built from
+  // those, the cycle squats and sways ~11% of body height every step, which
+  // is what read as dancing rather than walking - a walk's own bob is a few
+  // percent, and the four working directions sit inside a 1-7px spread.
+  //
+  // So the contacts come from the upright group instead, and the opposite
+  // contact is a mirror. Mirroring is rejected elsewhere in this file because
+  // a flip also flips body yaw, but that was measured on poses that are
+  // turned; s4r0c0 is the most symmetric cell in either sheet (head 1.3px and
+  // torso 0.0px off its ground anchor), so the flip moves her yaw by ~0.2
+  // screen px while cleanly swapping which foot is planted AND which arm is
+  // forward. Heights are 223/223/223 - no bob at all.
+  //
+  // Front-on strides genuinely show little leg travel, so this reads calmer
+  // than the side views by design. Prefer that over the squat: the eye reads
+  // a bouncing torso as dancing long before it reads a short step as sliding.
+  { name: "s",  poses: [["s4", 1, 2], ["s4", 0, 0], ["s4", 0, 0, true]] },
   { name: "se", poses: [["s3", 2, 0], ["s3", 1, 0], ["s3", 0, 4]] },
   { name: "e",  poses: [["s4", 1, 1], ["s4", 0, 5], ["s3", 0, 7]] },
   // n's neutral must be a genuinely upright standing pose: s4r2c3 looked
