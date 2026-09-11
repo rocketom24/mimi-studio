@@ -39,6 +39,15 @@ const SHEETS = {
         cols: [[64,134],[285,364],[514,602],[737,821],[960,1053],[1186,1281]],
         rows: [[13,185],[213,384],[412,573],[607,761]],
         standing: 170.75 },
+  // Front-facing walk sheet. Unlike s3/s4 this one is a purpose-built cycle:
+  // every cell is a head-on render at a near-identical height (432-440), so
+  // `standing` is just its own neutral cell (r0c1) — normalising that onto
+  // REFERENCE_STANDING makes a south frame exactly as tall as every other
+  // direction's neutral, which is what keeps Mimi's size fixed as she turns.
+  s5: { file: `${CHAR_DIR}/sheet-5.png`,
+        cols: [[41,217],[296,476],[556,734],[805,984]],
+        rows: [[48,487],[533,968]],
+        standing: 438 },
 };
 
 /** Scale every sheet onto sheet 3's figure size, so no frame changes Mimi's height. */
@@ -66,26 +75,37 @@ const REFERENCE_STANDING = SHEETS.s3.standing;
  * visible on the right in one, the left in the other) while the yaw matches.
  */
 const DIRECTIONS = [
-  // South is the one direction with no authored walk cycle: measured over
-  // every front-facing cell, the only ones with real leg separation are the
-  // row 2-3 crouches and lunges, which normalise to 184-202px against the
-  // upright 219-223 and lean the torso up to 28px off the anchor. Built from
-  // those, the cycle squats and sways ~11% of body height every step, which
-  // is what read as dancing rather than walking - a walk's own bob is a few
-  // percent, and the four working directions sit inside a 1-7px spread.
+  // South comes from sheet 5, which is a real front-facing walk cycle rather
+  // than a pose dump, so this is the one direction built from authored frames
+  // alone — no mirroring, no borrowing from a turned view. Of its 8 cells only
+  // three phases are actually distinct; the rest are near-duplicates of the
+  // r1c1 family (four cells all showing left planted / right heel up).
   //
-  // So the contacts come from the upright group instead, and the opposite
-  // contact is a mirror. Mirroring is rejected elsewhere in this file because
-  // a flip also flips body yaw, but that was measured on poses that are
-  // turned; s4r0c0 is the most symmetric cell in either sheet (head 1.3px and
-  // torso 0.0px off its ground anchor), so the flip moves her yaw by ~0.2
-  // screen px while cleanly swapping which foot is planted AND which arm is
-  // forward. Heights are 223/223/223 - no bob at all.
+  // Picked by measuring each shoe separately (bottom 13% band, split into
+  // x-runs): its ground clearance, its silhouette area — in a head-on render
+  // the near foot is the big one, so area is what carries the depth of a
+  // stride the camera cannot show directly — and its dark-sole pixel count,
+  // which is only nonzero once a heel has left the floor.
   //
-  // Front-on strides genuinely show little leg travel, so this reads calmer
-  // than the side views by design. Prefer that over the squat: the eye reads
-  // a bouncing torso as dancing long before it reads a short step as sliding.
-  { name: "s",  poses: [["s4", 1, 2], ["s4", 0, 0], ["s4", 0, 0, true]] },
+  //   r0c1  neutral   both shoes flat (clearance 2/0, sole 0/12), feet together
+  //   r1c1  contactA  left flat and planted, right heel fully up (sole 800, the
+  //                   sheet's strongest toe-off) — RIGHT leg rear
+  //   r0c2  contactB  left shoe 12px clear of the floor and at its smallest
+  //                   area, right flat and planted — LEFT leg rear
+  //
+  // r0c2 is used as the opposite contact instead of a mirror of r1c1 on purpose:
+  // it is a real render, so it does not flip body yaw (head offsets are -3.8 and
+  // -2.8 — same side), and the arms already swing correctly against the legs.
+  // Measured as hand offset from the feet midpoint, r1c1 is (-56, +42) and r0c2
+  // is (-43, +50): each pose carries its rear leg's arm forward, which is the
+  // opposite-limb swing a real walk has, and it reverses between the two.
+  //
+  // Stability: torso offsets are 0.4 / -4.2 / -2.9 raw px (0.33 screen px of
+  // sway end to end) and heights 438 / 434 / 440 (0.4 screen px of bob, lowest
+  // at the weight-bearing contact) — a walk's own weight shift, well under the
+  // ~11% squat that made the previous south frames read as dancing. The planted
+  // shoe sits within 2 raw px of the same spot in all three, so nothing slides.
+  { name: "s",  poses: [["s5", 0, 1], ["s5", 1, 1], ["s5", 0, 2]] },
   { name: "se", poses: [["s3", 2, 0], ["s3", 1, 0], ["s3", 0, 4]] },
   { name: "e",  poses: [["s4", 1, 1], ["s4", 0, 5], ["s3", 0, 7]] },
   // n's neutral must be a genuinely upright standing pose: s4r2c3 looked

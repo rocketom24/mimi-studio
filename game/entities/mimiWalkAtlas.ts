@@ -15,7 +15,7 @@ export type AtlasDirection = keyof typeof ATLAS_ROW;
 export const MIMI_WALK_ATLAS = {
   key: "mimi-walk",
   path: "/assets/game/character/mimi-walk.png",
-  frameWidth: 124,
+  frameWidth: 122,
   frameHeight: 231,
   columns: 3,
   /**
@@ -23,7 +23,7 @@ export const MIMI_WALK_ATLAS = {
    * directions. Player pins its sprite scale to this so Mimi's on-screen size
    * is a property of the art, not of whichever frame happens to be showing.
    */
-  referenceStandingHeight: 222.55,
+  referenceStandingHeight: 222.48,
   /**
    * Transparent gap left below the feet inside each cell. The ground anchor is
    * at (frameWidth / 2, frameHeight - padBottom), which is what the sprite's
