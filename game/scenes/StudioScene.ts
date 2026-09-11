@@ -308,6 +308,13 @@ export class StudioScene extends Phaser.Scene {
     const bounds = this.computeCameraBounds();
     this.cameras.main.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
     this.cameras.main.setZoom(this.computeFitZoom() * this.zoomFactor);
+    // The ambient wash is screen-space but Phaser still scales scrollFactor-0
+    // objects by the camera zoom (see lighting.ts), so it has to be redrawn
+    // for the new zoom or it stops covering the viewport. Guarded because the
+    // first framing pass in create() runs before the overlay exists.
+    if (this.ambientLighting) {
+      resizeAmbientLighting(this.ambientLighting, this.scale.width, this.scale.height, this.cameras.main.zoom);
+    }
   }
 
   /** Eases zoomFactor toward targetZoomFactor every frame — see ZOOM_SMOOTHING's doc comment for why this replaced a per-wheel-event Tween. */
@@ -321,8 +328,8 @@ export class StudioScene extends Phaser.Scene {
 
   /** Called by Phaser's ScaleManager whenever the canvas is resized (window resize, container resize) — the game size is no longer a fixed constant, so every viewport-dependent calc has to redo itself here instead of once at create(). */
   private handleGameResize(): void {
+    // applyCameraFraming redraws the ambient overlay for the new viewport/zoom.
     this.applyCameraFraming();
-    resizeAmbientLighting(this.ambientLighting, this.scale.width, this.scale.height);
   }
 
   /** Zoom level at which the house's whole projected extent fits inside FILL_FACTOR of the current viewport — the baseline user zoom (zoomFactor=1) multiplies against. Recomputed every call instead of cached since the viewport size changes continuously with the window. */
