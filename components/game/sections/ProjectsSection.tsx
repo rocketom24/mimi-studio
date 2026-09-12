@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LuLayers, LuListChecks, LuSparkles } from "react-icons/lu";
+import { LuExternalLink, LuLayers, LuListChecks, LuSparkles } from "react-icons/lu";
 import { PROJECTS } from "@/game/data/portfolio";
 import { Badge, Chip, Eyebrow, Reveal, SubHeading, revealStyle } from "./theme";
 
@@ -69,6 +69,17 @@ export default function ProjectsSection() {
               <p className="mt-2 font-sans text-[14px] leading-relaxed text-[var(--mimi-cream)]/85 sm:text-[15px]">
                 {project.description}
               </p>
+              {project.link ? (
+                <a
+                  href={project.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mimi-motion mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--mimi-line)] bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-[var(--mimi-gold)] transition-colors duration-200 hover:border-[var(--mimi-gold)] hover:bg-[var(--mimi-gold)]/10"
+                >
+                  <LuExternalLink size={12} aria-hidden />
+                  Open Live Demo
+                </a>
+              ) : null}
             </div>
 
             <div className="mimi-reveal flex flex-wrap gap-2" style={revealStyle(1)}>

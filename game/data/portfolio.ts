@@ -277,6 +277,7 @@ export interface ProjectEntry {
   readonly description: string;
   readonly features: readonly string[];
   readonly tech: readonly TechItem[];
+  readonly link?: string;
 }
 
 export const PROJECTS: readonly ProjectEntry[] = [
@@ -300,6 +301,24 @@ export const PROJECTS: readonly ProjectEntry[] = [
       { name: "Stripe", icon: SiStripe },
       { name: "Tailwind CSS", icon: SiTailwindcss },
     ],
+  },
+  {
+    name: "PKSF Digital Experience",
+    year: "2026",
+    description:
+      "Modern digital concept for the Palli Karma-Sahayak Foundation (PKSF) website, focused on improved visual hierarchy, responsive UX, accessibility and modern web standards.",
+    features: [
+      "Rebuilt the interface with reusable React components and a scalable Next.js architecture",
+      "Responsive layouts and animations tuned across every breakpoint",
+      "Accessibility and modern web standards built into the component layer",
+    ],
+    tech: [
+      { name: "Next.js", icon: SiNextdotjs },
+      { name: "React", icon: SiReact },
+      { name: "TypeScript", icon: SiTypescript },
+      { name: "Tailwind CSS", icon: SiTailwindcss },
+    ],
+    link: "https://pksf-digital-experience.vercel.app/",
   },
   {
     name: "EWU FairRide",
