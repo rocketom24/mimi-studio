@@ -10,6 +10,130 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-fraunces);
+}
+
+/* ---------------------------------------------------------------------------
+   Mimi Studio portfolio-panel design tokens.
+
+   Deliberately warm (lamplight on wood), not the world's purple: the HUD
+   already established that warmth as the studio's own UI layer, and the
+   accents are lifted straight from game/world/palette.ts (green 0x6bbf8a,
+   blue 0x4ad0e8) so the panels read as part of the same apartment.
+   --------------------------------------------------------------------------- */
+:root {
+  --mimi-ink: #14100b;
+  --mimi-ink-2: #211a12;
+  --mimi-gold: #ffd98e;
+  --mimi-gold-dim: #c9a86a;
+  --mimi-cream: #f4ecdd;
+  --mimi-muted: #b9a88f;
+  --mimi-sage: #8fc9a4;
+  --mimi-sky: #7fd3e3;
+  --mimi-clay: #e0916a;
+  --mimi-line: rgba(255, 217, 142, 0.16);
+  --mimi-line-strong: rgba(255, 217, 142, 0.38);
+}
+
+/* Layered translucency. Nested glass sees the parent's already-composited
+   backdrop, which is what gives the panels their sense of depth. */
+.mimi-glass {
+  background:
+    linear-gradient(158deg, rgba(255, 217, 142, 0.08), rgba(20, 16, 11, 0.42) 62%),
+    rgba(33, 26, 18, 0.52);
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  border: 1px solid var(--mimi-line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 233, 168, 0.1),
+    0 18px 44px -20px rgba(0, 0, 0, 0.85);
+}
+
+.mimi-glass-soft {
+  background: linear-gradient(158deg, rgba(255, 217, 142, 0.055), rgba(20, 16, 11, 0.3));
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  border: 1px solid var(--mimi-line);
+}
+
+/* The lamp: a single warm source bleeding in from the panel's top-left,
+   matching how the apartment itself is lit. */
+.mimi-lamp::before {
+  content: "";
+  position: absolute;
+  inset: -40% 40% 55% -35%;
+  background: radial-gradient(closest-side, rgba(255, 217, 142, 0.3), transparent 72%);
+  pointer-events: none;
+}
+
+/* Staggered entrance. Children set --i to their index. */
+@keyframes mimi-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mimi-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.mimi-reveal {
+  animation: mimi-rise 0.52s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 55ms + 110ms);
+}
+
+.mimi-rule {
+  transform-origin: left;
+  animation: mimi-draw 0.7s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: 140ms;
+}
+
+/* Thin warm scrollbar so the panel body doesn't hand a stock grey bar back. */
+.mimi-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--mimi-gold-dim) transparent;
+}
+.mimi-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.mimi-scroll::-webkit-scrollbar-thumb {
+  background: rgba(201, 168, 106, 0.45);
+  border-radius: 999px;
+}
+.mimi-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 217, 142, 0.65);
+}
+.mimi-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Chip rows scroll sideways on narrow screens but must not show a bar for it —
+   the chips themselves are the affordance. */
+.mimi-rail {
+  scrollbar-width: none;
+}
+.mimi-rail::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mimi-reveal,
+  .mimi-rule {
+    animation: none;
+  }
+  .mimi-motion {
+    transition-duration: 1ms !important;
+  }
 }
 
 @media (prefers-color-scheme: dark) {

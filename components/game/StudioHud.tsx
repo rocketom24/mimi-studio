@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { hudFadeOpacity } from "@/lib/hudFade";
+import MimiAvatar from "@/components/game/MimiAvatar";
 
 interface StudioHudProps {
   /** From StudioScene's SCENE_EVENTS.ZoomChange — 1 (fitted) to 2.5 (max zoom in). */
@@ -44,31 +45,6 @@ const DPAD_HINT_CELLS: { glyph: string; cell: string }[] = [
   { glyph: "▼", cell: "col-start-2 row-start-3" },
 ];
 
-/**
- * The logo avatar is one frame cropped out of the walk sheet by background
- * sizing, so every dimension has to scale together with the element — sizing
- * the box alone would just show a different (wrong) part of the sheet.
- * Authored against a 36px box; SHEET/OFFSET are that reference.
- */
-const AVATAR_REF_PX = 36;
-const AVATAR_SHEET = { width: 403.2, height: 230.4, offsetX: -15.6 };
-
-function LogoAvatar({ size }: { size: number }) {
-  const scale = size / AVATAR_REF_PX;
-  return (
-    <div
-      className="shrink-0 rounded-full border border-[#ffe9a8]/60 bg-[#1a1423]"
-      style={{
-        height: size,
-        width: size,
-        backgroundImage: "url(/assets/game/character/mimi-sheet-1.png)",
-        backgroundSize: `${AVATAR_SHEET.width * scale}px ${AVATAR_SHEET.height * scale}px`,
-        backgroundPosition: `${AVATAR_SHEET.offsetX * scale}px 0px`,
-      }}
-    />
-  );
-}
-
 export default function StudioHud({ zoomFactor, isTouchDevice, compact, hasStartedMoving }: StudioHudProps) {
   const [toastTimedOut, setToastTimedOut] = useState(false);
   // Compact viewports open the guide only on demand — left expanded it would
@@ -98,7 +74,10 @@ export default function StudioHud({ zoomFactor, isTouchDevice, compact, hasStart
           marginTop: "env(safe-area-inset-top)",
         }}
       >
-        <LogoAvatar size={compact ? 22 : 36} />
+        <MimiAvatar
+          size={compact ? 22 : 36}
+          className="shrink-0 rounded-full border border-[#ffe9a8]/60 bg-[#1a1423]"
+        />
         <span className={`font-bold tracking-wide text-[#ffe9a8] ${compact ? "text-[10px]" : "text-xs"}`}>Mimi Studio</span>
       </div>
 

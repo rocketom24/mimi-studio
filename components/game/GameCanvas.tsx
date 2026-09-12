@@ -122,7 +122,12 @@ export default function GameCanvas({ furnitureAssetFiles }: GameCanvasProps) {
         compact={isCompact}
         hasStartedMoving={hasStartedMoving}
       />
-      {isTouchDevice && (
+      {/* Touch hardware OR a phone-sized viewport. The second half matters
+          because a phone-sized screen is the one place there's no keyboard to
+          fall back on, so the controls must never be missing there — and it
+          makes the mobile layout complete when previewed in a narrow desktop
+          window, which is how it gets reviewed. */}
+      {(isTouchDevice || isCompact) && (
         <TouchControls
           onDirection={handleDirection}
           onInteract={handleInteract}

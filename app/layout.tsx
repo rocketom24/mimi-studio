@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Fraunces, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,17 +12,48 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Display face for the portfolio panels only. Fraunces' soft, slightly wonky
+// serif reads handmade rather than corporate, which is the same register as
+// the pixel apartment it opens on top of.
+const fraunces = Fraunces({
+  variable: "--font-fraunces",
+  subsets: ["latin"],
+  display: "swap",
+});
+
+const SITE_TITLE = "Mimi Studio — Tasmim Portfolio";
+const SITE_DESCRIPTION =
+  "Walk around Mimi Studio, a cozy apartment you explore to read the portfolio of Tasmim Shajahan, full stack developer.";
+
+// Absolute base for the link-preview image. Vercel supplies the production
+// host at build time; the env override is for a custom domain, and localhost
+// only ever applies in development.
+const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
+
+// The icon and preview artwork are generated from Mimi's own sprite sheet —
+// see app/icon.tsx, app/apple-icon.tsx and app/opengraph-image.tsx, which Next
+// wires up as <link rel="icon"/apple-touch-icon> and og:image automatically.
 export const metadata: Metadata = {
-  title: "Tasmim Portfolio",
-  description: "Interactive portfolio of Tasmim Shajahan, Welcome to her world.",
+  metadataBase: new URL(SITE_URL),
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
+  applicationName: "Mimi Studio",
+  authors: [{ name: "Tasmim Shajahan" }],
   openGraph: {
-    title: "Tasmim Portfolio",
-    description: "Interactive portfolio of Tasmim Shajahan, Welcome to her world.",
+    type: "website",
+    siteName: "Mimi Studio",
+    url: "/",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Tasmim Portfolio",
-    description: "Interactive portfolio of Tasmim Shajahan, Welcome to her world.",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
   },
 };
 
@@ -47,7 +78,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
     >
       <body className="h-full overflow-hidden overscroll-none">{children}</body>
     </html>

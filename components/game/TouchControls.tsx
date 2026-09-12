@@ -38,8 +38,11 @@ const DPAD_BUTTONS: { direction: Direction; label: string; rotation: string; cel
 // above the minimum comfortable touch target.
 const BUTTON_SIZE = "h-12 w-12 min-[400px]:h-14 min-[400px]:w-14 [@media(max-height:520px)]:h-11 [@media(max-height:520px)]:w-11";
 
+// Warm lamplight-on-wood, matching StudioHud's panels and the portfolio
+// panels' --mimi-* tokens — these buttons used to be the old popup purple,
+// which is the one bit of that palette left on screen.
 const BUTTON_STYLE =
-  `flex ${BUTTON_SIZE} touch-none select-none items-center justify-center rounded border-2 border-[#6f5c9e] bg-[#1e1730]/70 text-lg leading-none text-[#f2ecff] shadow-[2px_2px_0_0_rgba(0,0,0,0.5)] active:translate-y-px active:bg-[#3a2f4d] disabled:opacity-40`;
+  `flex ${BUTTON_SIZE} touch-none select-none items-center justify-center rounded-md border border-[#ffe9a8]/30 bg-[#221a14]/85 text-lg leading-none text-[#f0ead6] shadow-[2px_2px_0_0_rgba(0,0,0,0.4)] active:translate-y-px active:border-[#ffe9a8]/60 active:bg-[#3a2a1c] disabled:opacity-40`;
 
 function DpadButton({
   direction,
@@ -116,10 +119,10 @@ export default function TouchControls({ onDirection, onInteract, canInteract, di
         aria-label="Interact"
         disabled={disabled || !canInteract}
         onClick={onInteract}
-        className={`pointer-events-auto absolute bottom-6 right-4 flex ${BUTTON_SIZE} touch-none select-none items-center justify-center rounded-full border-2 font-mono text-lg font-bold shadow-[2px_2px_0_0_rgba(0,0,0,0.5)] active:translate-y-px sm:bottom-8 sm:right-5 [@media(max-height:520px)]:bottom-3 [@media(max-height:520px)]:right-3 ${
+        className={`pointer-events-auto absolute right-4 bottom-6 flex ${BUTTON_SIZE} touch-none select-none items-center justify-center rounded-full border font-mono text-lg font-bold shadow-[2px_2px_0_0_rgba(0,0,0,0.4)] transition-colors duration-200 active:translate-y-px sm:right-5 sm:bottom-8 [@media(max-height:520px)]:right-3 [@media(max-height:520px)]:bottom-3 ${
           canInteract && !disabled
-            ? "border-[#ffe9a8] bg-[#6f5c9e] text-[#ffe9a8]"
-            : "border-[#6f5c9e]/50 bg-[#1e1730]/70 text-[#f2ecff]/40"
+            ? "border-[#ffe9a8] bg-[#ffe9a8]/20 text-[#ffe9a8] shadow-[0_0_16px_-4px_#ffe9a8]"
+            : "border-[#ffe9a8]/20 bg-[#221a14]/85 text-[#f0ead6]/40"
         }`}
       >
         E

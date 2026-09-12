@@ -1,6 +1,7 @@
 import * as Phaser from "phaser";
 import { WORLD_PIXEL_HEIGHT, WORLD_PIXEL_WIDTH } from "@/game/config/world";
 import { projectedSize } from "@/game/world/projection";
+import { ZOOM_MAX, baselineZoom, minZoomFactor } from "@/game/world/cameraFraming";
 import { visualDepth } from "@/game/world/depth";
 import { ROOMS } from "@/game/world/rooms";
 import { createHouseFloor } from "@/game/world/floorSystem";
@@ -25,26 +26,15 @@ import { INTERACTABLES } from "@/game/data/interactables";
 import { GAME_EVENTS, SCENE_EVENTS } from "@/game/types/interaction";
 import type { Interactable } from "@/game/types/interaction";
 
-// applyCameraFraming's fit-zoom already sizes the house to fill FILL_FACTOR
-// of whatever viewport it's given (see computeFitZoom), so ZOOM_MIN/MAX are
-// relative multipliers ON TOP of that fit, not absolute zoom levels — 1
-// always means "fitted", regardless of window size/aspect. ZOOM_MIN is
-// pinned to 1 (the fit itself) so the user can never zoom out past the
-// FILL_FACTOR framing into empty padded world space; zooming in (>1) is
-// still free since computeCameraBounds clamps bounds back to the house's
-// exact extent once the viewport is smaller than it.
-const FILL_FACTOR = 0.8;
-// On a phone the fitted zoom is pinned by the SHORT axis (a 390px-wide
-// portrait screen against a wide isometric house), so the usual 20% breathing
-// room costs a fifth of an already tiny screen and leaves the house floating
-// in a sea of background. Phone-sized viewports keep only a hairline of
-// padding instead. Thresholds mirror useIsTouchDevice's COMPACT_QUERY so the
-// camera and the HUD switch to their compact treatment together.
-const COMPACT_FILL_FACTOR = 0.98;
-const COMPACT_MAX_WIDTH = 640;
-const COMPACT_MAX_HEIGHT = 520;
-const ZOOM_MIN = 1;
-const ZOOM_MAX = 2.5;
+// The camera's BASELINE zoom (what zoomFactor=1 draws the house at) is chosen
+// per viewport in game/world/cameraFraming.ts — desktop and landscape phones
+// fit the whole house, portrait phones frame its height instead so the art is
+// never downscaled. ZOOM_MIN/MAX are relative multipliers ON TOP of that
+// baseline, not absolute zoom levels, so 1 always means "the default framing
+// for this viewport" regardless of window size/aspect. Zooming in (>1) is
+// always free since computeCameraBounds clamps bounds back to the house's
+// exact extent once the viewport is smaller than it; zooming out is bounded by
+// minZoomFactor(), which stops at the whole-house view and no further.
 const ZOOM_STEP = 0.1;
 // User-initiated zoom (keys/wheel) eases toward its target every frame in
 // update() rather than via a Phaser Tween — a rapid wheel/trackpad fires many
@@ -328,16 +318,26 @@ export class StudioScene extends Phaser.Scene {
 
   /** Called by Phaser's ScaleManager whenever the canvas is resized (window resize, container resize) — the game size is no longer a fixed constant, so every viewport-dependent calc has to redo itself here instead of once at create(). */
   private handleGameResize(): void {
+    // The zoom floor is viewport-dependent (see minZoomFactor), so a rotation
+    // from portrait to landscape can leave an existing zoomed-out factor below
+    // the new floor — re-clamp before reframing rather than letting the camera
+    // sit outside its own range until the next pinch.
+    const minFactor = this.minZoomFactor();
+    this.zoomFactor = Phaser.Math.Clamp(this.zoomFactor, minFactor, ZOOM_MAX);
+    this.targetZoomFactor = Phaser.Math.Clamp(this.targetZoomFactor, minFactor, ZOOM_MAX);
     // applyCameraFraming redraws the ambient overlay for the new viewport/zoom.
     this.applyCameraFraming();
+    this.events.emit(SCENE_EVENTS.ZoomChange, this.zoomFactor);
   }
 
-  /** Zoom level at which the house's whole projected extent fits inside FILL_FACTOR of the current viewport — the baseline user zoom (zoomFactor=1) multiplies against. Recomputed every call instead of cached since the viewport size changes continuously with the window. */
+  /** Baseline zoom for the current viewport — see game/world/cameraFraming.ts. Recomputed every call instead of cached since the viewport size changes continuously with the window. */
   private computeFitZoom(): number {
-    const size = projectedSize();
-    const compact = this.scale.width <= COMPACT_MAX_WIDTH || this.scale.height <= COMPACT_MAX_HEIGHT;
-    const fill = compact ? COMPACT_FILL_FACTOR : FILL_FACTOR;
-    return Math.min(this.scale.width / size.width, this.scale.height / size.height) * fill;
+    return baselineZoom(this.scale.width, this.scale.height);
+  }
+
+  /** How far out zoomFactor may go on this viewport — 1 normally, lower on a portrait phone so a pinch can still reach the whole-house overview. */
+  private minZoomFactor(): number {
+    return minZoomFactor(this.scale.width, this.scale.height);
   }
 
   /**
@@ -370,7 +370,7 @@ export class StudioScene extends Phaser.Scene {
 
   /** Only moves the target — update()'s updateZoomSmoothing() eases the actual camera toward it every frame, so rapid-fire wheel/key events (trackpad scroll can send dozens a second) never restart or fight an in-flight animation. */
   private adjustZoom(delta: number): void {
-    this.targetZoomFactor = Phaser.Math.Clamp(this.targetZoomFactor + delta, ZOOM_MIN, ZOOM_MAX);
+    this.targetZoomFactor = Phaser.Math.Clamp(this.targetZoomFactor + delta, this.minZoomFactor(), ZOOM_MAX);
     (window as unknown as { __CAM_DEBUG__?: unknown }).__CAM_DEBUG__ = {
       zoomFactor: this.zoomFactor,
       targetZoomFactor: this.targetZoomFactor,
@@ -524,7 +524,7 @@ export class StudioScene extends Phaser.Scene {
       this.pinchLastDistance = distance;
       return;
     }
-    const next = Phaser.Math.Clamp(this.zoomFactor * (distance / this.pinchLastDistance), ZOOM_MIN, ZOOM_MAX);
+    const next = Phaser.Math.Clamp(this.zoomFactor * (distance / this.pinchLastDistance), this.minZoomFactor(), ZOOM_MAX);
     this.pinchLastDistance = distance;
     if (next === this.zoomFactor) return;
     this.zoomFactor = next;

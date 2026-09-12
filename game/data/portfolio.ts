@@ -68,6 +68,23 @@ export const SECTION_TITLES: Record<PortfolioSectionId, string> = {
   currentlyLearning: "Currently Learning",
 };
 
+/**
+ * The furniture that opens each section, mirroring game/data/interactables.ts.
+ * The panel shows it as a provenance eyebrow, so a visitor always knows which
+ * piece of the apartment they just opened.
+ */
+export const SECTION_SOURCES: Record<PortfolioSectionId, string> = {
+  about: "Kitchen",
+  experience: "TV & Sofa",
+  projects: "PC",
+  skills: "Bed",
+  education: "Bookshelf",
+  contact: "Phone & Cabinet",
+  cv: "Almari & Dressing Table",
+  techStack: "Dining Table",
+  currentlyLearning: "Garden",
+};
+
 // ---- About ----
 
 export const ABOUT_INTRO = {
@@ -78,7 +95,7 @@ export const ABOUT_INTRO = {
     "Hi, I'm Tasmim. Mimi, the one you're walking around as right now, is my stand-in for this tour. This whole apartment, the furniture, the code that makes it all move, I built it, so consider this your tour guide talking.",
     "What I actually do all day is build full web apps by myself, start to finish. Database, backend, the screens you click on, getting it all live on the internet without anyone else's help. Right now that means running the entire ordering and kitchen system for a real sushi restaurant in Milan. Reservations, table orders, payments, the whole thing quietly working while people eat their sushi.",
     "Before any of that I spent a stretch as an education consultant, helping students figure out where they were going and keeping every bit of paperwork in order. Turns out untangling a messy application process and untangling a messy codebase use the same part of my brain.",
-    "When I'm not building things for other people I'm building things purely because I want them to exist. An app for writing Urdu poetry. This entire game you're standing in right now, walls, furniture and all — even the Cat Room is modeled on my actual cats. Go poke around the rest of the room, every piece of furniture has a bit more of me tucked behind it.",
+    "When I'm not building things for other people I'm building things purely because I want them to exist. An app for writing Urdu poetry. This entire game you're standing in right now, walls, furniture and all, even the Cat Room is modeled on my actual cats. Go poke around the rest of the room, every piece of furniture has a bit more of me tucked behind it.",
   ],
 } as const;
 
@@ -321,22 +338,28 @@ export const PROJECTS: readonly ProjectEntry[] = [
 
 // ---- Skills (what I can do, distinct from Tech Stack's what I use) ----
 
+/** Display grouping for the Skills panel — organisational only, claims unchanged. */
+export type SkillGroup = "Build" | "Connect & Secure" | "Refine & Deliver";
+
 export interface SkillEntry {
   readonly label: string;
   readonly description: string;
   readonly icon: IconType;
+  readonly group: SkillGroup;
 }
 
+export const SKILL_GROUPS: readonly SkillGroup[] = ["Build", "Connect & Secure", "Refine & Deliver"];
+
 export const SKILLS: readonly SkillEntry[] = [
-  { label: "Full-Stack Development", description: "Owning a feature from schema to shipped UI", icon: LuLayers },
-  { label: "API Integration", description: "REST APIs, CRUD operations, server actions", icon: LuNetwork },
-  { label: "Database Design", description: "Normalized relational schemas, indexing", icon: LuDatabase },
-  { label: "Authentication & RBAC", description: "Session management, protected routes, role-based access", icon: LuKeyRound },
-  { label: "Payments & Webhooks", description: "Stripe checkout, verification, webhook workflows", icon: LuWebhook },
-  { label: "Performance Optimization", description: "Query tuning, caching, lazy loading, Core Web Vitals", icon: LuGauge },
-  { label: "Debugging", description: "Tracing issues across the full stack to root cause", icon: LuBug },
-  { label: "Secure Coding", description: "Protected routes, access control, safe data handling", icon: LuShieldCheck },
-  { label: "Project Coordination", description: "Client communication, documentation, stakeholder management", icon: LuBriefcase },
+  { label: "Full-Stack Development", description: "Owning a feature from schema to shipped UI", icon: LuLayers, group: "Build" },
+  { label: "Database Design", description: "Normalized relational schemas, indexing", icon: LuDatabase, group: "Build" },
+  { label: "API Integration", description: "REST APIs, CRUD operations, server actions", icon: LuNetwork, group: "Build" },
+  { label: "Authentication & RBAC", description: "Session management, protected routes, role-based access", icon: LuKeyRound, group: "Connect & Secure" },
+  { label: "Payments & Webhooks", description: "Stripe checkout, verification, webhook workflows", icon: LuWebhook, group: "Connect & Secure" },
+  { label: "Secure Coding", description: "Protected routes, access control, safe data handling", icon: LuShieldCheck, group: "Connect & Secure" },
+  { label: "Performance Optimization", description: "Query tuning, caching, lazy loading, Core Web Vitals", icon: LuGauge, group: "Refine & Deliver" },
+  { label: "Debugging", description: "Tracing issues across the full stack to root cause", icon: LuBug, group: "Refine & Deliver" },
+  { label: "Project Coordination", description: "Client communication, documentation, stakeholder management", icon: LuBriefcase, group: "Refine & Deliver" },
 ];
 
 // ---- Currently Learning (placeholder — no source data provided yet) ----
