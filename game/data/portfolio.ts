@@ -40,6 +40,7 @@ import {
   LuNetwork,
   LuPhone,
   LuPuzzle,
+  LuScrollText,
   LuShieldCheck,
   LuWebhook,
 } from "react-icons/lu";
@@ -53,7 +54,8 @@ export type PortfolioSectionId =
   | "contact"
   | "cv"
   | "techStack"
-  | "currentlyLearning";
+  | "currentlyLearning"
+  | "publications";
 
 /** Panel header title per section, shown by the shared PortfolioPanel shell. */
 export const SECTION_TITLES: Record<PortfolioSectionId, string> = {
@@ -66,6 +68,7 @@ export const SECTION_TITLES: Record<PortfolioSectionId, string> = {
   cv: "Quick CV",
   techStack: "Tech Stack",
   currentlyLearning: "Currently Learning",
+  publications: "Publications",
 };
 
 /**
@@ -83,6 +86,7 @@ export const SECTION_SOURCES: Record<PortfolioSectionId, string> = {
   cv: "Almari & Dressing Table",
   techStack: "Dining Table",
   currentlyLearning: "Garden",
+  publications: "Cat Tower",
 };
 
 // ---- About ----
@@ -124,13 +128,23 @@ export const EXPERIENCE: readonly ExperienceEntry[] = [
   {
     company: "EdSparkle Education Consultancy",
     role: "Education Consultant & Marketing Manager",
-    dates: "June 2025 – September 2025",
+    dates: "June 2025 – February 2026",
     location: "Dhaka, Bangladesh",
     bullets: [
-      "Provided education consulting services while managing end-to-end client communication and documentation throughout the application process.",
-      "Created digital marketing content and coordinated marketing campaigns across multiple platforms.",
-      "Collaborated with team members to manage multiple client projects, ensuring timely communication and accurate documentation.",
-      "Strengthened problem-solving, communication, project coordination, and stakeholder management skills in a fast-paced environment.",
+      "Managed client communication, documentation, and end-to-end education application processes.",
+      "Created digital marketing content and coordinated campaigns across multiple platforms.",
+      "Collaborated with team members to manage client projects and ensure timely delivery.",
+    ],
+  },
+  {
+    company: "ForesightBytes",
+    role: "Backend Developer Intern",
+    dates: "December 2023 – April 2025",
+    location: "Remote",
+    bullets: [
+      "Developed backend modules for an ERP-based software system using Java.",
+      "Implemented business logic, database operations, data processing, and application workflows.",
+      "Debugged backend functionality and collaborated on software testing and integration.",
     ],
   },
 ];
@@ -333,6 +347,38 @@ export const PROJECTS: readonly ProjectEntry[] = [
       { name: "Android Studio", icon: SiAndroidstudio },
       { name: "Firebase", icon: SiFirebase },
     ],
+  },
+];
+
+// ---- Publications ----
+
+export interface PublicationEntry {
+  readonly title: string;
+  readonly venue: string;
+  readonly year: string;
+  readonly description: string;
+  readonly href: string;
+  readonly icon: IconType;
+}
+
+export const PUBLICATIONS: readonly PublicationEntry[] = [
+  {
+    title: "Algorithmic Fairness Perceptions in the Global South: Evidence from Bangladesh",
+    venue: "arXiv",
+    year: "2026",
+    description:
+      "A study of how people in Bangladesh judge the fairness of algorithmic decisions, from pricing to allocation. It brings Global South evidence to a fairness literature written mostly from the West.",
+    href: "https://arxiv.org/html/2508.05281v3",
+    icon: LuScrollText,
+  },
+  {
+    title: "BDLemonLeaf: Image Dataset of Healthy and Disease Lemon (Citrus limon) Leaves",
+    venue: "Mendeley Data",
+    year: "2025",
+    description:
+      "An open image dataset of healthy and diseased lemon leaves, collected and labelled for plant disease research. It gives computer-vision models real field imagery to train and benchmark against.",
+    href: "https://data.mendeley.com/datasets/643f5bbc2t/6",
+    icon: LuDatabase,
   },
 ];
 

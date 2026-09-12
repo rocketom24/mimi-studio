@@ -104,6 +104,16 @@ export const INTERACTABLES: Interactable[] = [
     radius: INTERACTION_RADIUS,
     panelId: "skills",
   },
+  // cat-tower (cat room) -> Publications. Its footprint spans world x 11-39,
+  // y 219-255, so this stands clear on the open floor just south of it and
+  // well north of cat-house (y 293+).
+  {
+    id: "cat-tower",
+    x: 42,
+    y: 272,
+    radius: INTERACTION_RADIUS,
+    panelId: "publications",
+  },
   // garden-sofa (garden) -> Currently Learning
   {
     id: "garden",

@@ -31,6 +31,7 @@ const GUIDE_ENTRIES: [string, string][] = [
   ["Dining Table", "Tech Stack"],
   ["PC", "Projects"],
   ["Bed", "Skills"],
+  ["Cat Tower", "Publications"],
   ["Garden", "Currently Learning"],
 ];
 

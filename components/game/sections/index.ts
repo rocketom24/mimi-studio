@@ -7,6 +7,7 @@ import EducationSection from "./EducationSection";
 import ExperienceSection from "./ExperienceSection";
 import LearningSection from "./LearningSection";
 import ProjectsSection from "./ProjectsSection";
+import PublicationsSection from "./PublicationsSection";
 import SkillsSection from "./SkillsSection";
 import TechStackSection from "./TechStackSection";
 
@@ -21,4 +22,5 @@ export const SECTION_COMPONENTS: Record<PortfolioSectionId, ComponentType> = {
   projects: ProjectsSection,
   skills: SkillsSection,
   currentlyLearning: LearningSection,
+  publications: PublicationsSection,
 };
